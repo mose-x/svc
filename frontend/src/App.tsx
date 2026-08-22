@@ -184,6 +184,12 @@ function App() {
         token: {
           colorPrimary: '#1677ff',
         },
+        components: {
+          Tooltip: {
+            colorBgSpotlight: isDark ? 'rgba(0,0,0,0.85)' : '#fff',
+            colorTextLightSolid: isDark ? '#fff' : 'rgba(0,0,0,0.88)',
+          },
+        },
       }}
     >
       <AntApp>
