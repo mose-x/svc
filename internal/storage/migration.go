@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"svc/internal/config"
+	"svc/internal/fsutil"
 	"svc/internal/logger"
 	"svc/internal/pathmgr"
 	"svc/internal/sdk"
@@ -121,7 +122,7 @@ func (m *Manager) MigrateInstallPath(newPath string) error {
 	}
 
 	logger.Info("Copying files from %s to %s", oldDir, newDir)
-	if err := pathmgr.CopyDir(oldDir, newDir); err != nil {
+	if err := fsutil.CopyDir(oldDir, newDir); err != nil {
 		logger.Error("Failed to copy directory: %v", err)
 		// M10: Clean up partial copy so retry doesn't hit "target already exists".
 		os.RemoveAll(newDir)

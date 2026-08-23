@@ -50,6 +50,13 @@ func classifyPathCopy(goos string, sdkType SdkType, p string) PathCopyClassifica
 	return c
 }
 
+// normalizePathForMatch lowercases p and normalizes both path separators to
+// "/" so prefix/segment rules written for Unix also match Windows paths on
+// any host. Every path-matching rule in the sdk package goes through this.
+func normalizePathForMatch(p string) string {
+	return strings.ToLower(strings.ReplaceAll(filepath.ToSlash(p), "\\", "/"))
+}
+
 // IsSystemSdkPath reports whether p (binary or directory) sits in an
 // OS-managed location for the given SDK type. Generic protected directories
 // apply to every SDK type; Python additionally treats distro/framework paths
@@ -71,9 +78,7 @@ func IsProtectedSystemDir(goos, dir string) bool {
 	if dir == "" {
 		return false
 	}
-	// ReplaceAll (not just filepath.ToSlash) so Windows backslash paths are
-	// normalized on non-Windows test hosts too.
-	p := strings.ToLower(strings.ReplaceAll(filepath.ToSlash(filepath.Clean(dir)), "\\", "/"))
+	p := normalizePathForMatch(filepath.Clean(dir))
 	var prefixes []string
 	switch goos {
 	case "darwin":

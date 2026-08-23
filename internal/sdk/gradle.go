@@ -135,30 +135,5 @@ func (f *GradleFetcher) GetDownloadURL(version string) (string, string, error) {
 }
 
 func (f *GradleFetcher) GetLocalStatus() (*SdkStatus, error) {
-	installed, _ := f.cfg.GetInstalledVersions(string(Gradle))
-	active := f.cfg.GetActiveVersion(string(Gradle))
-	configured := active != ""
-
-	needsSwitch := false
-	if active != "" {
-		found := false
-		for _, v := range installed {
-			if v == active {
-				found = true
-				break
-			}
-		}
-		needsSwitch = !found
-	}
-
-	return &SdkStatus{
-		SdkType:           Gradle,
-		DisplayName:       SdkDisplayName(Gradle),
-		Configured:        configured,
-		PathConfigured:    !configured && IsCommandAvailable("gradle"),
-		CurrentVersion:    active,
-		InstalledVersions: installed,
-		InstallPath:       f.cfg.SdkDir(string(Gradle)),
-		NeedsSwitch:       needsSwitch,
-	}, nil
+	return baseLocalStatus(f.cfg, Gradle, "gradle"), nil
 }

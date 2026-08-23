@@ -278,27 +278,5 @@ func (f *RubyFetcher) GetDownloadURL(version string) (string, string, error) {
 }
 
 func (f *RubyFetcher) GetLocalStatus() (*SdkStatus, error) {
-	installed, _ := f.cfg.GetInstalledVersions(string(Ruby))
-	active := f.cfg.GetActiveVersion(string(Ruby))
-	configured := active != ""
-
-	needsSwitch := false
-	if active != "" {
-		found := false
-		for _, v := range installed {
-			if v == active {
-				found = true
-				break
-			}
-		}
-		needsSwitch = !found
-	}
-
-	return &SdkStatus{
-		SdkType: Ruby, DisplayName: SdkDisplayName(Ruby),
-		Configured: configured, PathConfigured: !configured && IsCommandAvailable("ruby"),
-		CurrentVersion:    active,
-		InstalledVersions: installed, InstallPath: f.cfg.SdkDir(string(Ruby)),
-		NeedsSwitch: needsSwitch,
-	}, nil
+	return baseLocalStatus(f.cfg, Ruby, "ruby"), nil
 }

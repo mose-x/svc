@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"svc/internal/fsutil"
 	"svc/internal/logger"
 	"svc/internal/pathmgr"
 	"svc/internal/sdk"
@@ -27,7 +28,7 @@ func copyToTargetAtomically(sourceDir, targetDir string, binDirs []string, sdkTy
 	oldDir := targetDir + ".old"
 	os.RemoveAll(tmpDir)
 	os.RemoveAll(oldDir)
-	if err := pathmgr.CopyDir(sourceDir, tmpDir); err != nil {
+	if err := fsutil.CopyDir(sourceDir, tmpDir); err != nil {
 		os.RemoveAll(tmpDir)
 		return fmt.Errorf("failed to copy SDK: %w", err)
 	}

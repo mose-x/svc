@@ -168,9 +168,7 @@ func DetectNodeExternalManager(nodePath string) string {
 	if nodePath == "" {
 		return ""
 	}
-	// ReplaceAll (not just filepath.ToSlash) so Windows backslash paths are
-	// normalized on non-Windows test hosts too.
-	p := strings.ToLower(strings.ReplaceAll(filepath.ToSlash(nodePath), "\\", "/"))
+	p := normalizePathForMatch(nodePath)
 	for _, seg := range strings.Split(p, "/") {
 		switch seg {
 		case ".nvm.rust":
@@ -204,46 +202,20 @@ func resolveNodeExternalManager(binPath string) string {
 }
 
 func (f *NodejsFetcher) GetLocalStatus() (*SdkStatus, error) {
-	installed, _ := f.cfg.GetInstalledVersions(string(NodeJS))
-	active := f.cfg.GetActiveVersion(string(NodeJS))
-	configured := active != ""
-
-	// Check if currentVersion is still valid (exists in installed versions)
-	needsSwitch := false
-	if active != "" {
-		found := false
-		for _, v := range installed {
-			if v == active {
-				found = true
-				break
-			}
-		}
-		needsSwitch = !found
-	}
+	st := baseLocalStatus(f.cfg, NodeJS, "node")
 
 	// Locate the PATH copy (SVC shims excluded). When it lives inside an
 	// external version manager's home (nvm-rust / nvm), report the manager
 	// so the UI tells the user to keep using that tool instead of offering
 	// an import that would fight the manager's own shim setup.
-	pathBinary := ""
-	externalManager := ""
-	if !configured {
-		pathBinary = ResolveSystemCommand("node")
-		externalManager = ClassifyPathCopy(NodeJS, pathBinary).ExternalManager
+	if !st.Configured {
+		pathBinary := ResolveSystemCommand("node")
+		st.PathConfigured = pathBinary != ""
+		st.PathBinary = pathBinary
+		st.ExternalManager = ClassifyPathCopy(NodeJS, pathBinary).ExternalManager
 	}
 
-	return &SdkStatus{
-		SdkType:           NodeJS,
-		DisplayName:       SdkDisplayName(NodeJS),
-		Configured:        configured,
-		PathConfigured:    pathBinary != "",
-		ExternalManager:   externalManager,
-		PathBinary:        pathBinary,
-		CurrentVersion:    active,
-		InstalledVersions: installed,
-		InstallPath:       f.cfg.SdkDir(string(NodeJS)),
-		NeedsSwitch:       needsSwitch,
-	}, nil
+	return st, nil
 }
 
 func (f *NodejsFetcher) GetDownloadURL(version string) (string, string, error) {

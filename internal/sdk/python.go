@@ -134,9 +134,7 @@ func IsWindowsStorePython(binPath string) bool {
 	if binPath == "" {
 		return false
 	}
-	// ReplaceAll (not just filepath.ToSlash) so Windows backslash paths are
-	// normalized on non-Windows test hosts too.
-	lower := strings.ToLower(strings.ReplaceAll(filepath.ToSlash(binPath), "\\", "/"))
+	lower := normalizePathForMatch(binPath)
 	return strings.Contains(lower, "appdata/local/microsoft/windowsapps")
 }
 
@@ -321,34 +319,17 @@ func (f *PythonFetcher) GetDownloadURL(version string) (string, string, error) {
 }
 
 func (f *PythonFetcher) GetLocalStatus() (*SdkStatus, error) {
-	installed, _ := f.cfg.GetInstalledVersions(string(Python))
-	active := f.cfg.GetActiveVersion(string(Python))
-	configured := active != ""
-
-	needsSwitch := false
-	if active != "" {
-		found := false
-		for _, v := range installed {
-			if v == active {
-				found = true
-				break
-			}
-		}
-		needsSwitch = !found
-	}
-
 	// Use the platform-specific verify command so macOS/Linux detect the
-	// system python3 (not the absent `python`). When a PATH copy is found,
-	// also resolve its real binary path and flag system-managed copies
-	// (e.g. /usr/bin/python3) that cannot be safely imported -- the UI then
-	// hides the import button and guides the user to install instead.
+	// system python3 (not the absent `python`).
 	cmdName, _ := f.VerifyCommand()
-	pathConfigured := false
-	systemProtected := false
-	systemPath := ""
-	pathBinary := ""
-	if !configured {
-		pathBinary = ResolveSystemCommand(cmdName)
+	st := baseLocalStatus(f.cfg, Python, cmdName)
+
+	// When a PATH copy is found, resolve its real binary path and flag
+	// system-managed copies (e.g. /usr/bin/python3) that cannot be safely
+	// imported -- the UI then hides the import button and guides the user to
+	// install instead.
+	if !st.Configured {
+		pathBinary := ResolveSystemCommand(cmdName)
 		// Central classification: the Windows Store stub is hidden entirely
 		// (executing it opens the Store), system copies are flagged so the
 		// UI hides the import action.
@@ -356,24 +337,13 @@ func (f *PythonFetcher) GetLocalStatus() (*SdkStatus, error) {
 		if cl.Hidden {
 			pathBinary = ""
 		}
-		pathConfigured = pathBinary != ""
-		if pathConfigured && cl.SystemProtected {
-			systemProtected = true
-			systemPath = pathBinary
+		st.PathConfigured = pathBinary != ""
+		st.PathBinary = pathBinary
+		if st.PathConfigured && cl.SystemProtected {
+			st.SystemProtected = true
+			st.SystemPath = pathBinary
 		}
 	}
 
-	return &SdkStatus{
-		SdkType:           Python,
-		DisplayName:       SdkDisplayName(Python),
-		Configured:        configured,
-		PathConfigured:    pathConfigured,
-		SystemProtected:   systemProtected,
-		SystemPath:        systemPath,
-		PathBinary:        pathBinary,
-		CurrentVersion:    active,
-		InstalledVersions: installed,
-		InstallPath:       f.cfg.SdkDir(string(Python)),
-		NeedsSwitch:       needsSwitch,
-	}, nil
+	return st, nil
 }

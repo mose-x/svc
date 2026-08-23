@@ -119,3 +119,19 @@ func (s *Service) findJavaHome() string {
 	}
 	return ""
 }
+
+// postImportVerifier returns the layer-2 post-check shared by all three
+// import flows: after the layout is aligned and the tree is copied, the
+// destination must still report exactly the version detected pre-copy.
+func (s *Service) postImportVerifier(f sdk.VersionFetcher, versionName string) func(string) error {
+	return func(dir string) error {
+		postVer, err := s.detectVersionFromDir(dir, f)
+		if err != nil {
+			return fmt.Errorf("post-import verification failed: %w", err)
+		}
+		if postVer != versionName {
+			return fmt.Errorf("post-import version mismatch: expected %s, got %s", versionName, postVer)
+		}
+		return nil
+	}
+}

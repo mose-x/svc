@@ -265,27 +265,5 @@ func (f *PHPFetcher) GetDownloadURL(version string) (string, string, error) {
 }
 
 func (f *PHPFetcher) GetLocalStatus() (*SdkStatus, error) {
-	installed, _ := f.cfg.GetInstalledVersions(string(PHP))
-	active := f.cfg.GetActiveVersion(string(PHP))
-	configured := active != ""
-
-	needsSwitch := false
-	if active != "" {
-		found := false
-		for _, v := range installed {
-			if v == active {
-				found = true
-				break
-			}
-		}
-		needsSwitch = !found
-	}
-
-	return &SdkStatus{
-		SdkType: PHP, DisplayName: SdkDisplayName(PHP),
-		Configured: configured, PathConfigured: !configured && IsCommandAvailable("php"),
-		CurrentVersion:    active,
-		InstalledVersions: installed, InstallPath: f.cfg.SdkDir(string(PHP)),
-		NeedsSwitch: needsSwitch,
-	}, nil
+	return baseLocalStatus(f.cfg, PHP, "php"), nil
 }

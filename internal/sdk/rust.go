@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"svc/internal/config"
+	"svc/internal/fsutil"
 )
 
 type RustFetcher struct {
@@ -114,49 +115,12 @@ func (f *RustFetcher) MergeComponents(versionDir string) error {
 			if err := os.MkdirAll(filepath.Dir(dstRustlib), 0755); err != nil {
 				return err
 			}
-			if err := copyDir(srcRustlib, dstRustlib); err != nil {
+			if err := fsutil.CopyDir(srcRustlib, dstRustlib); err != nil {
 				return fmt.Errorf("failed to copy rustlib to %s: %w", comp, err)
 			}
 		}
 	}
 	return nil
-}
-
-func copyDir(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode())
-		}
-		return copyFile(path, target, info.Mode())
-	})
-}
-
-func copyFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
-	if err != nil {
-		return err
-	}
-	// M2: Surface Close errors (e.g. disk full during flush) — previously
-	// dropped via defer out.Close(), hiding the real cause of a corrupt copy.
-	_, err = io.Copy(out, in)
-	if cerr := out.Close(); cerr != nil && err == nil {
-		err = cerr
-	}
-	return err
 }
 
 func (f *RustFetcher) FetchRemoteVersions() ([]VersionInfo, error) {
@@ -222,29 +186,7 @@ func (f *RustFetcher) buildFileName(version string) string {
 }
 
 func (f *RustFetcher) GetLocalStatus() (*SdkStatus, error) {
-	installed, _ := f.cfg.GetInstalledVersions(string(Rust))
-	active := f.cfg.GetActiveVersion(string(Rust))
-	configured := active != ""
-
-	needsSwitch := false
-	if active != "" {
-		found := false
-		for _, v := range installed {
-			if v == active {
-				found = true
-				break
-			}
-		}
-		needsSwitch = !found
-	}
-
-	return &SdkStatus{
-		SdkType: Rust, DisplayName: SdkDisplayName(Rust),
-		Configured: configured, PathConfigured: !configured && IsCommandAvailable("rustc"),
-		CurrentVersion:    active,
-		InstalledVersions: installed, InstallPath: f.cfg.SdkDir(string(Rust)),
-		NeedsSwitch: needsSwitch,
-	}, nil
+	return baseLocalStatus(f.cfg, Rust, "rustc"), nil
 }
 
 // FetchChecksum returns the SHA256 of the Rust tarball for the given version.
