@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"svc/internal/config"
 	"svc/internal/extractor"
@@ -69,6 +70,10 @@ func (s *Service) ImportLocalSdk(sdkTypeStr string, localPath string) error {
 	if err != nil {
 		logger.Error("Path does not exist: %s", localPath)
 		return fmt.Errorf("path does not exist: %s", localPath)
+	}
+
+	if err := rejectUnimportableSource(sdkType, localPath, info.IsDir()); err != nil {
+		return err
 	}
 
 	var sourceDir string
@@ -160,6 +165,9 @@ func (s *Service) ImportSdk(externalPath string, sdkType string) error {
 		return fmt.Errorf("unknown SDK type: %s", sdkType)
 	}
 	logger.Info("Importing SDK: %s from %s", sdkType, externalPath)
+	if err := rejectUnimportableSource(sdk.SdkType(sdkType), externalPath, true); err != nil {
+		return err
+	}
 	sdkRoot := pathmgr.DetectSdkRoot(externalPath, sdkType)
 
 	// Layer 1: Pre-check — run the verify binary to confirm it's usable.
@@ -226,6 +234,22 @@ func (s *Service) ImportPathSdk(sdkTypeStr string) error {
 		return fmt.Errorf("%s not found in system PATH", cmdName)
 	}
 
+	// Node.js installed via nvm / nvm-rust resolves into the manager's home
+	// (~/.nvm, ~/.nvm.rust). Importing it would copy the manager's shim tree
+	// into SVC and fight the manager for PATH ownership. Refuse and guide the
+	// user to keep using that manager instead.
+	if mgr := detectExternalManager(sdkType, binPath); mgr != "" {
+		return fmt.Errorf("%s is managed by %s; please keep using %s to maintain it instead of importing into SVC",
+			cmdName, mgr, mgr)
+	}
+
+	// Refuse protected OS directories (e.g. /usr/bin) for every SDK type, not
+	// just Python: importing them would CopyDir an OS tree into the store.
+	if pathmgr.IsProtectedSystemDir(runtime.GOOS, filepath.Dir(binPath)) {
+		return fmt.Errorf("system %s is at %s (a protected OS path) and cannot be imported; please install %s via the app instead",
+			cmdName, binPath, f.Type())
+	}
+
 	// Python on macOS/Linux lives at /usr/bin/python3 (system-managed) and
 	// Windows Store ships a python.exe stub in WindowsApps. Importing either
 	// would CopyDir an OS directory (/usr, C:\Windows, ...) into the app's
@@ -283,4 +307,36 @@ func (s *Service) ImportPathSdk(sdkTypeStr string) error {
 
 	logger.Info("Successfully imported SDK from PATH: %s %s", sdkTypeStr, versionName)
 	return nil
+}
+
+// rejectUnimportableSource refuses import sources that must never be copied
+// into the SVC store: OS-protected directories (/usr/bin, C:\Windows, ...)
+// for every SDK type, and Node.js copies owned by an external version manager
+// (nvm / nvm-rust) whose shim setup would fight SVC for PATH ownership.
+// isDir=false (archive file) skips the protected-directory check.
+func rejectUnimportableSource(sdkType sdk.SdkType, p string, isDir bool) error {
+	if isDir && pathmgr.IsProtectedSystemDir(runtime.GOOS, p) {
+		return fmt.Errorf("%s is a protected system directory and cannot be imported; please install the SDK via the app instead", p)
+	}
+	if mgr := detectExternalManager(sdkType, p); mgr != "" {
+		return fmt.Errorf("this copy is managed by %s; please keep using %s to maintain it instead of importing into SVC", mgr, mgr)
+	}
+	return nil
+}
+
+// detectExternalManager reports the external version manager (nvm / nvm-rust)
+// owning the SDK copy at p (a binary file or its containing directory), or "".
+// Only Node.js has external-manager detection today. Symlinks are resolved so
+// a shim or alias link pointing into a manager home still matches.
+func detectExternalManager(sdkType sdk.SdkType, p string) string {
+	if sdkType != sdk.NodeJS || p == "" {
+		return ""
+	}
+	if mgr := sdk.DetectNodeExternalManager(p); mgr != "" {
+		return mgr
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return sdk.DetectNodeExternalManager(resolved)
+	}
+	return ""
 }
