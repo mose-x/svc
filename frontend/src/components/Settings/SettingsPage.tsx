@@ -11,6 +11,7 @@ import {
   Modal,
   Progress,
   Space,
+  Tooltip,
 } from 'antd'
 import {
   SettingOutlined,
@@ -45,6 +46,7 @@ import {
   DownloadUpdate,
   ApplyUpdate,
   RollbackUpdate,
+  HasUpdateBackup,
   GetTmpCacheSize,
   CleanTmpCache,
   CheckProxy,
@@ -124,6 +126,9 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
     downloadThreads: 4,
   })
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
+  // Whether a rollback backup (.bak) exists. Fetched on mount so the rollback
+  // button can be disabled instead of surfacing a "no backup found" error.
+  const [hasBackup, setHasBackup] = useState(false)
   // The version reported by the backend at startup (from about.json). Unlike
   // appInfo.version, this is NOT mutated when a download completes, so the
   // "update ready" hint keeps showing the real current version instead of
@@ -202,6 +207,9 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
         }
       })
       .catch((e) => console.error('Failed to load app info:', e))
+    HasUpdateBackup()
+      .then(setHasBackup)
+      .catch(() => setHasBackup(false))
     GetDefaultEndpoints()
       .then((de) => setDefaultEndpoints(de || []))
       .catch((e) => console.error('Failed to load default endpoints:', e))
@@ -544,7 +552,15 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
     }
   }
 
-  const handleRollback = () => {
+  const handleRollback = async () => {
+    // Race guard: re-check right before the confirm dialog so a backup that
+    // disappeared since mount shows a friendly notice instead of an error.
+    const available = await HasUpdateBackup().catch(() => false)
+    if (!available) {
+      setHasBackup(false)
+      msgApi.warning(t('settings.rollbackNoBackup'))
+      return
+    }
     modal.confirm({
       title: t('settings.rollbackConfirm'),
       content: t('settings.rollbackConfirmDesc'),
@@ -1388,9 +1404,17 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
                   >
                     {t('about.checkUpdateBtn')}
                   </Button>
-                  <Button icon={<UndoOutlined />} onClick={handleRollback}>
-                    {t('settings.rollbackBtn')}
-                  </Button>
+                  <Tooltip
+                    title={!hasBackup ? t('settings.rollbackNoBackup') : ''}
+                  >
+                    <Button
+                      icon={<UndoOutlined />}
+                      onClick={handleRollback}
+                      disabled={!hasBackup}
+                    >
+                      {t('settings.rollbackBtn')}
+                    </Button>
+                  </Tooltip>
                 </Space>
               </div>
 

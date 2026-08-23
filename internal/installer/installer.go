@@ -112,10 +112,7 @@ func (s *Service) GetAllSdkStatus() []sdk.SdkStatus {
 			})
 			continue
 		}
-		if status.PathConfigured && status.PathVersion == "" {
-			cmd, args := f.VerifyCommand()
-			status.PathVersion = helpers.ExtractVersionFromOutput(cmd, args)
-		}
+		completePathInfo(status, f)
 		// Filter the transient "<version>.old"/"<version>.new" byproducts of
 		// the rename-old-first atomic replace (left behind briefly by a
 		// crashed install or a slow cleanup): they are not installable
@@ -140,7 +137,30 @@ func (s *Service) GetSdkStatus(sdkType string) (*sdk.SdkStatus, error) {
 	if f == nil {
 		return nil, fmt.Errorf("unknown SDK type: %s", sdkType)
 	}
-	return f.GetLocalStatus()
+	status, err := f.GetLocalStatus()
+	if err != nil {
+		return nil, err
+	}
+	completePathInfo(status, f)
+	return status, nil
+}
+
+// completePathInfo fills the derived PATH-copy fields on a status: the
+// detected PATH version and the resolved binary path (the yellow "!" on the
+// detail page shows the latter). Fetchers that already resolved either field
+// (python, nodejs) keep their value.
+func completePathInfo(status *sdk.SdkStatus, f sdk.VersionFetcher) {
+	if status == nil || !status.PathConfigured {
+		return
+	}
+	if status.PathVersion == "" {
+		cmd, args := f.VerifyCommand()
+		status.PathVersion = helpers.ExtractVersionFromOutput(cmd, args)
+	}
+	if status.PathBinary == "" {
+		cmd, _ := f.VerifyCommand()
+		status.PathBinary = helpers.ResolveCommand(cmd)
+	}
 }
 
 func (s *Service) CheckSystemConflicts(sdkType string) ([]string, error) {

@@ -111,32 +111,15 @@ func (m *UnixPathManager) GetAllPathEntries() ([]PathEntry, error) {
 		if p == "" {
 			continue
 		}
-		isManaged := hasSvcSegment(p)
-		if isManaged {
-			sdkType := detectSdkTypeFromPath(p)
+		if hasSvcSegment(p) {
 			entries = append(entries, PathEntry{
 				Path:      p,
-				IsManaged: isManaged,
-				SdkType:   sdkType,
+				IsManaged: true,
+				SdkType:   detectSdkTypeFromPath(p),
 			})
-		} else {
-			sdkTypes := detectSdkTypesByBin(p)
-			if len(sdkTypes) == 0 {
-				entries = append(entries, PathEntry{
-					Path:      p,
-					IsManaged: isManaged,
-					SdkType:   "",
-				})
-			} else {
-				for _, st := range sdkTypes {
-					entries = append(entries, PathEntry{
-						Path:      p,
-						IsManaged: isManaged,
-						SdkType:   st,
-					})
-				}
-			}
+			continue
 		}
+		entries = append(entries, buildUnmanagedEntries(p, m.cfg)...)
 	}
 	return DeduplicateEntries(entries), nil
 }

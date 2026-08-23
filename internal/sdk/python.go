@@ -3,7 +3,6 @@ package sdk
 import (
 	"fmt"
 	"net/http"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -115,6 +114,22 @@ func IsSystemPythonPath(binPath string) bool {
 		}
 	}
 	return false
+}
+
+// IsWindowsStorePython reports whether binPath is a Microsoft Store Python
+// alias stub (e.g. %LOCALAPPDATA%\Microsoft\WindowsApps\python.exe). The stub
+// is not a real interpreter: executing it opens the Microsoft Store, so the
+// app must skip detection entirely -- no version probe, no import offer, and
+// no entry shown in the SDK list. Pure path check (no GOOS gate) so tests can
+// exercise it on any host; callers only invoke it on Windows.
+func IsWindowsStorePython(binPath string) bool {
+	if binPath == "" {
+		return false
+	}
+	// ReplaceAll (not just filepath.ToSlash) so Windows backslash paths are
+	// normalized on non-Windows test hosts too.
+	lower := strings.ToLower(strings.ReplaceAll(filepath.ToSlash(binPath), "\\", "/"))
+	return strings.Contains(lower, "appdata/local/microsoft/windowsapps")
 }
 
 // platformTarget returns the python-build-standalone target triple used in
@@ -320,13 +335,22 @@ func (f *PythonFetcher) GetLocalStatus() (*SdkStatus, error) {
 	// (e.g. /usr/bin/python3) that cannot be safely imported -- the UI then
 	// hides the import button and guides the user to install instead.
 	cmdName, _ := f.VerifyCommand()
-	pathConfigured := !configured && IsCommandAvailable(cmdName)
+	pathConfigured := false
 	systemProtected := false
 	systemPath := ""
-	if pathConfigured {
-		if p, err := exec.LookPath(cmdName); err == nil && IsSystemPythonPath(p) {
+	pathBinary := ""
+	if !configured {
+		pathBinary = ResolveSystemCommand(cmdName)
+		// Windows ships a Microsoft Store stub (WindowsApps\python.exe) that
+		// opens the Store when executed. Skip detection, import and display
+		// for it entirely -- probing its version would pop up the Store.
+		if runtime.GOOS == "windows" && IsWindowsStorePython(pathBinary) {
+			pathBinary = ""
+		}
+		pathConfigured = pathBinary != ""
+		if pathConfigured && IsSystemPythonPath(pathBinary) {
 			systemProtected = true
-			systemPath = p
+			systemPath = pathBinary
 		}
 	}
 
@@ -337,6 +361,7 @@ func (f *PythonFetcher) GetLocalStatus() (*SdkStatus, error) {
 		PathConfigured:    pathConfigured,
 		SystemProtected:   systemProtected,
 		SystemPath:        systemPath,
+		PathBinary:        pathBinary,
 		CurrentVersion:    active,
 		InstalledVersions: installed,
 		InstallPath:       f.cfg.SdkDir(string(Python)),

@@ -10,6 +10,7 @@ import {
   Modal,
   Dropdown,
   Result,
+  Typography,
 } from 'antd'
 import {
   CheckCircleFilled,
@@ -25,6 +26,7 @@ import {
   FolderOpenOutlined,
   FileOutlined,
   WarningOutlined,
+  ExclamationCircleFilled,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import {
@@ -51,6 +53,7 @@ import {
 } from '../../../wailsjs/go/main/App'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import { formatBytes } from '../../utils/format'
+import { externalManagerName } from '../../constants/sdk'
 
 interface DetailPanelProps {
   status: SdkStatus | undefined
@@ -609,6 +612,40 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
     })
   }
 
+  // Yellow "!" on the header: shows the exact file the PATH command resolves
+  // to for a PATH-only SDK (import candidates and manager-owned copies).
+  const showPathBinaryModal = () => {
+    if (!status?.pathBinary) return
+    modal.info({
+      title: t('detail.pathBinaryTitle'),
+      content: (
+        <div>
+          <p style={{ marginBottom: 8, color: '#888' }}>
+            {t('detail.pathBinaryDesc')}
+          </p>
+          <Typography.Paragraph
+            copyable
+            style={{
+              fontFamily: 'monospace',
+              fontSize: 12,
+              wordBreak: 'break-all',
+            }}
+          >
+            {status.pathBinary}
+          </Typography.Paragraph>
+          {status.externalManager && (
+            <p style={{ color: '#888' }}>
+              {t('detail.externalManagerHint', {
+                manager: externalManagerName(status.externalManager),
+              })}
+            </p>
+          )}
+        </div>
+      ),
+      okText: t('app.confirm'),
+    })
+  }
+
   const filteredVersions = versions.filter(
     (v) =>
       v.version.includes(searchText) || String(v.major).includes(searchText),
@@ -655,6 +692,24 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
             />
           </Tooltip>
         )}
+        {status.pathConfigured && !status.configured && status.pathBinary && (
+          <Tooltip title={t('detail.pathBinaryTooltip')}>
+            <ExclamationCircleFilled
+              onClick={showPathBinaryModal}
+              style={{
+                position: 'absolute',
+                top: 12,
+                right:
+                  12 +
+                  (status.needsSwitch ? 24 : 0) +
+                  (conflicts.length > 0 ? 24 : 0),
+                fontSize: 18,
+                color: '#faad14',
+                cursor: 'pointer',
+              }}
+            />
+          </Tooltip>
+        )}
         <h2>
           {status.displayName}
           <span
@@ -668,7 +723,12 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
               <>
                 <CheckCircleFilled />{' '}
                 {status.pathVersion ? `v${status.pathVersion}` : ''} (
-                {t('app.inPathOnly')})
+                {status.externalManager
+                  ? t('app.externalManager', {
+                      manager: externalManagerName(status.externalManager),
+                    })
+                  : t('app.inPathOnly')}
+                )
               </>
             ) : (
               <>
@@ -778,7 +838,11 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
             <Dropdown
               menu={{
                 items: [
-                  ...(status && !status.configured && status.pathConfigured
+                  ...(status &&
+                  !status.configured &&
+                  status.pathConfigured &&
+                  !status.externalManager &&
+                  !status.systemProtected
                     ? [
                         {
                           key: 'path',

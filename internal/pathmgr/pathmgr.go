@@ -6,6 +6,14 @@ type PathEntry struct {
 	IsManaged bool   `json:"isManaged"` // whether under .svc
 	SdkType   string `json:"sdkType"`   // identified SDK type (empty = unknown)
 	Source    string `json:"source"`    // "user", "system", or "external"
+	// SystemProtected marks OS-managed directories (/usr/bin, C:\Windows, ...)
+	// that must never be imported; the UI shows a "system-managed" tag instead
+	// of the import button.
+	SystemProtected bool `json:"systemProtected"`
+	// ExternalManager names the external version manager owning this copy
+	// ("nvm-rust" / "nvm" for Node.js); the UI tells the user to keep using
+	// that manager instead of importing. Empty for standalone copies.
+	ExternalManager string `json:"externalManager"`
 }
 
 // ShimConfigurer is implemented by shimmanager.Manager. When injected into a

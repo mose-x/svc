@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -157,6 +158,51 @@ func (f *NodejsFetcher) buildDownloadURL(version string) (string, string) {
 	return url, fileName
 }
 
+// DetectNodeExternalManager reports whether nodePath (a node binary or any
+// path under its install tree) belongs to an external Node version manager
+// that SVC must not import: nvm-rust (nvm-rs, ~/.nvm.rust) or classic nvm
+// (~/.nvm, including nvm-windows under %APPDATA%\nvm). Returns the manager
+// name, or "" for standalone copies. Pure path check so tests can exercise
+// all platforms on any host.
+func DetectNodeExternalManager(nodePath string) string {
+	if nodePath == "" {
+		return ""
+	}
+	// ReplaceAll (not just filepath.ToSlash) so Windows backslash paths are
+	// normalized on non-Windows test hosts too.
+	p := strings.ToLower(strings.ReplaceAll(filepath.ToSlash(nodePath), "\\", "/"))
+	for _, seg := range strings.Split(p, "/") {
+		switch seg {
+		case ".nvm.rust":
+			return "nvm-rust"
+		case ".nvm":
+			return "nvm"
+		}
+	}
+	// nvm-windows keeps versions under %APPDATA%\nvm (no dot prefix).
+	if strings.Contains(p, "appdata/roaming/nvm/") {
+		return "nvm"
+	}
+	return ""
+}
+
+// resolveNodeExternalManager detects the external manager owning the node
+// binary at binPath, resolving symlinks first so a shim or alias link that
+// points into a manager home (e.g. ~/.nvm.rust/active -> vX.Y.Z) still
+// matches. Returns "" for standalone copies.
+func resolveNodeExternalManager(binPath string) string {
+	if binPath == "" {
+		return ""
+	}
+	if mgr := DetectNodeExternalManager(binPath); mgr != "" {
+		return mgr
+	}
+	if resolved, err := filepath.EvalSymlinks(binPath); err == nil {
+		return DetectNodeExternalManager(resolved)
+	}
+	return ""
+}
+
 func (f *NodejsFetcher) GetLocalStatus() (*SdkStatus, error) {
 	installed, _ := f.cfg.GetInstalledVersions(string(NodeJS))
 	active := f.cfg.GetActiveVersion(string(NodeJS))
@@ -175,11 +221,24 @@ func (f *NodejsFetcher) GetLocalStatus() (*SdkStatus, error) {
 		needsSwitch = !found
 	}
 
+	// Locate the PATH copy (SVC shims excluded). When it lives inside an
+	// external version manager's home (nvm-rust / nvm), report the manager
+	// so the UI tells the user to keep using that tool instead of offering
+	// an import that would fight the manager's own shim setup.
+	pathBinary := ""
+	externalManager := ""
+	if !configured {
+		pathBinary = ResolveSystemCommand("node")
+		externalManager = resolveNodeExternalManager(pathBinary)
+	}
+
 	return &SdkStatus{
 		SdkType:           NodeJS,
 		DisplayName:       SdkDisplayName(NodeJS),
 		Configured:        configured,
-		PathConfigured:    !configured && IsCommandAvailable("node"),
+		PathConfigured:    pathBinary != "",
+		ExternalManager:   externalManager,
+		PathBinary:        pathBinary,
 		CurrentVersion:    active,
 		InstalledVersions: installed,
 		InstallPath:       f.cfg.SdkDir(string(NodeJS)),
