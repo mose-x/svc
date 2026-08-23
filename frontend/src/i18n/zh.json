@@ -6,7 +6,8 @@
     "inPathOnly": "仅在 PATH 中",
     "systemManaged": "系统自带",
     "confirm": "确认",
-    "cancel": "取消"
+    "cancel": "取消",
+    "externalManager": "由 {{manager}} 管理"
   },
   "sidebar": {
     "home": "主页",
@@ -20,7 +21,8 @@
     "importConfirmDesc": "将自动检测 PATH 中的 SDK 并复制到 SVC 管理目录，同时更新环境变量",
     "importSuccess": "{{sdk}} 导入成功！",
     "importFail": "导入失败: {{error}}",
-    "needsSwitch": "激活版本已不存在，请切换到其他版本"
+    "needsSwitch": "激活版本已不存在，请切换到其他版本",
+    "externalManagerTooltip": "该 SDK 由 {{manager}} 程序安装管理，请继续使用 {{manager}} 维护，SVC 不提供导入"
   },
   "categories": {
     "runtime": "运行时 & 语言",
@@ -84,7 +86,11 @@
     "pmInstallSuccess": "{{name}} 安装成功",
     "pmInstallFail": "{{name}} 安装失败: {{error}}",
     "pmUpdateSuccess": "{{name}} 更新成功",
-    "pmUpdateFail": "{{name}} 更新失败: {{error}}"
+    "pmUpdateFail": "{{name}} 更新失败: {{error}}",
+    "externalManagerHint": "该 SDK 由 {{manager}} 程序管理，请继续使用 {{manager}} 维护",
+    "pathBinaryTooltip": "查看该 SDK 在 PATH 中的具体路径",
+    "pathBinaryTitle": "PATH 中的 SDK 路径",
+    "pathBinaryDesc": "该 SDK 尚未纳入 SVC 管理，当前命令解析自以下路径："
   },
   "progress": {
     "downloading": "下载中...",
@@ -108,7 +114,8 @@
     "importFail": "导入失败: {{error}}",
     "noSdkDetected": "未识别",
     "emptyPath": "PATH 中没有找到 SDK 相关路径",
-    "sdkColumn": "SDK"
+    "sdkColumn": "SDK",
+    "externallyManaged": "由 {{manager}} 管理"
   },
   "settings": {
     "title": "系统设置",
@@ -168,7 +175,8 @@
     "proxyCheckGoogle": "Google",
     "loading": "加载中...",
     "filename": "文件名",
-    "noContent": "无内容"
+    "noContent": "无内容",
+    "rollbackNoBackup": "当前没有可回滚的备份（仅在应用升级后可回滚上一版本）"
   },
   "logs": {
     "title": "日志管理",

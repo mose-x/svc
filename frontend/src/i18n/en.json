@@ -6,7 +6,8 @@
     "inPathOnly": "In PATH Only",
     "systemManaged": "System-Managed",
     "confirm": "Confirm",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "externalManager": "Managed by {{manager}}"
   },
   "sidebar": {
     "home": "Home",
@@ -20,7 +21,8 @@
     "importConfirmDesc": "This will detect the SDK in PATH, copy it to the SVC managed directory, and update environment variables.",
     "importSuccess": "{{sdk}} imported successfully!",
     "importFail": "Import failed: {{error}}",
-    "needsSwitch": "Active version missing, please switch to another version"
+    "needsSwitch": "Active version missing, please switch to another version",
+    "externalManagerTooltip": "This SDK is installed and managed by {{manager}}. Please keep using {{manager}} to maintain it — SVC does not import it."
   },
   "categories": {
     "runtime": "Runtime & Languages",
@@ -84,7 +86,11 @@
     "pmInstallSuccess": "{{name}} installed successfully",
     "pmInstallFail": "{{name}} install failed: {{error}}",
     "pmUpdateSuccess": "{{name}} updated successfully",
-    "pmUpdateFail": "{{name}} update failed: {{error}}"
+    "pmUpdateFail": "{{name}} update failed: {{error}}",
+    "externalManagerHint": "This SDK is managed by {{manager}}. Please keep using {{manager}} to maintain it.",
+    "pathBinaryTooltip": "Show the exact PATH location of this SDK",
+    "pathBinaryTitle": "SDK path in PATH",
+    "pathBinaryDesc": "This SDK is not managed by SVC yet. Its command currently resolves to:"
   },
   "progress": {
     "downloading": "Downloading...",
@@ -108,7 +114,8 @@
     "importFail": "Import failed: {{error}}",
     "noSdkDetected": "Unknown",
     "emptyPath": "No SDK-related paths found in PATH",
-    "sdkColumn": "SDK"
+    "sdkColumn": "SDK",
+    "externallyManaged": "Managed by {{manager}}"
   },
   "settings": {
     "title": "Settings",
@@ -168,7 +175,8 @@
     "proxyCheckGoogle": "Google",
     "loading": "Loading...",
     "filename": "Filename",
-    "noContent": "No content"
+    "noContent": "No content",
+    "rollbackNoBackup": "No rollback backup available (rollback is only possible after an in-app update)"
   },
   "logs": {
     "title": "Log Management",

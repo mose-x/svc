@@ -33,6 +33,8 @@ export interface SdkStatus {
   needsSwitch: boolean // true if currentVersion is not in installedVersions
   systemProtected: boolean // system-managed copy in a protected OS path (cannot import)
   systemPath: string // resolved path of the system-protected copy
+  externalManager: string // external version manager owning the PATH copy ("" = standalone)
+  pathBinary: string // resolved absolute path of the PATH copy's binary
 }
 
 export interface VersionInfo {

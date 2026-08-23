@@ -3,12 +3,18 @@ import { Modal, Table, Tag, Button, App, Empty } from 'antd'
 import { ImportOutlined, FolderOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { GetPathEntries, ImportSdk } from '../../../wailsjs/go/main/App'
-import { sdkColors, sdkDisplayNames } from '../../constants/sdk'
+import {
+  sdkColors,
+  sdkDisplayNames,
+  externalManagerName,
+} from '../../constants/sdk'
 
 interface PathEntry {
   path: string
   isManaged: boolean
   sdkType: string
+  systemProtected: boolean
+  externalManager: string
 }
 
 interface PathModalProps {
@@ -114,9 +120,17 @@ const PathModal: React.FC<PathModalProps> = ({ open, onClose, onRefresh }) => {
       align: 'right' as const,
       // isManaged is always false here — managed PATH entries are filtered
       // out in fetchEntries (see `!e.isManaged`) — so only the import-button
-      // / system-tag branches below can ever render.
+      // / externally-managed / system-tag branches below can ever render.
       render: (_managed: boolean, entry: PathEntry) =>
-        entry.sdkType ? (
+        entry.externalManager ? (
+          <Tag>
+            {t('path.externallyManaged', {
+              manager: externalManagerName(entry.externalManager),
+            })}
+          </Tag>
+        ) : entry.systemProtected ? (
+          <Tag>{t('app.systemManaged')}</Tag>
+        ) : entry.sdkType ? (
           <Button
             size="small"
             type="primary"

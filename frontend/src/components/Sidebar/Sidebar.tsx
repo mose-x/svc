@@ -5,10 +5,15 @@ import {
   ImportOutlined,
   SyncOutlined,
   WarningOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons'
 import { Tooltip } from 'antd'
 import { useTranslation } from 'react-i18next'
-import { sdkColors, SDK_CATEGORIES } from '../../constants/sdk'
+import {
+  sdkColors,
+  SDK_CATEGORIES,
+  externalManagerName,
+} from '../../constants/sdk'
 import logoImg from '../../assets/logo.png'
 
 interface SidebarProps {
@@ -470,7 +475,24 @@ const Sidebar: React.FC<SidebarProps> = ({
                   </div>
                   <div className="sdk-item-info">
                     <div className="sdk-item-name">{status.displayName}</div>
-                    {!status.configured && status.systemProtected ? (
+                    {!status.configured && status.externalManager ? (
+                      <Tooltip
+                        title={t('sidebar.externalManagerTooltip', {
+                          manager: externalManagerName(status.externalManager),
+                        })}
+                      >
+                        <div className="sdk-item-version sdk-item-system">
+                          <InfoCircleOutlined style={{ marginRight: 4 }} />
+                          {status.pathVersion
+                            ? `v${status.pathVersion} (${t('app.externalManager', { manager: externalManagerName(status.externalManager) })})`
+                            : t('app.externalManager', {
+                                manager: externalManagerName(
+                                  status.externalManager,
+                                ),
+                              })}
+                        </div>
+                      </Tooltip>
+                    ) : !status.configured && status.systemProtected ? (
                       <Tooltip title={t('sidebar.systemProtectedTooltip')}>
                         <div className="sdk-item-version sdk-item-system">
                           <WarningOutlined style={{ marginRight: 4 }} />

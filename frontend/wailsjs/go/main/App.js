@@ -118,6 +118,10 @@ export function GetTmpCacheSize() {
   return window['go']['main']['App']['GetTmpCacheSize']();
 }
 
+export function HasUpdateBackup() {
+  return window['go']['main']['App']['HasUpdateBackup']();
+}
+
 export function ImportLocalSdk(arg1, arg2) {
   return window['go']['main']['App']['ImportLocalSdk'](arg1, arg2);
 }

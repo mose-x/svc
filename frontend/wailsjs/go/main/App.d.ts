@@ -65,6 +65,8 @@ export function GetStorageInfo():Promise<Array<storage.StorageInfo>>;
 
 export function GetTmpCacheSize():Promise<number>;
 
+export function HasUpdateBackup():Promise<boolean>;
+
 export function ImportLocalSdk(arg1:string,arg2:string):Promise<void>;
 
 export function ImportPathSdk(arg1:string):Promise<void>;

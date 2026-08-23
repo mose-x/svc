@@ -11,7 +11,11 @@ import {
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { SdkStatus, SdkType } from '../../types/sdk'
-import { sdkColors, SDK_CATEGORIES } from '../../constants/sdk'
+import {
+  sdkColors,
+  SDK_CATEGORIES,
+  externalManagerName,
+} from '../../constants/sdk'
 import logoImg from '../../assets/logo.png'
 
 interface HomePageProps {
@@ -150,7 +154,9 @@ const HomePage: React.FC<HomePageProps> = ({
                       s.configured
                         ? `${s.displayName} v${s.currentVersion}`
                         : s.pathConfigured
-                          ? `${s.displayName} (${t('app.inPathOnly')})`
+                          ? s.externalManager
+                            ? `${s.displayName} (${t('app.externalManager', { manager: externalManagerName(s.externalManager) })})`
+                            : `${s.displayName} (${t('app.inPathOnly')})`
                           : `${s.displayName} - ${t('app.notConfigured')}`
                     }
                   >

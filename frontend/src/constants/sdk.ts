@@ -66,3 +66,13 @@ export const SDK_CATEGORIES: SdkCategory[] = [
   { key: 'build', sdkTypes: ['maven', 'gradle'] },
   { key: 'mobile', sdkTypes: ['flutter', 'android', 'dart'] },
 ]
+
+// Display names for external version managers detected on PATH. The backend
+// reports machine names ("nvm-rust", "nvm"); the UI shows user-facing labels.
+export const externalManagerNames: Record<string, string> = {
+  'nvm-rust': 'nvm(nvm-rust)',
+  nvm: 'nvm',
+}
+
+export const externalManagerName = (manager: string): string =>
+  externalManagerNames[manager] || manager
