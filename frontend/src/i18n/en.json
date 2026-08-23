@@ -90,7 +90,8 @@
     "externalManagerHint": "This SDK is managed by {{manager}}. Please keep using {{manager}} to maintain it.",
     "pathBinaryTooltip": "Show the exact PATH location of this SDK",
     "pathBinaryTitle": "SDK path in PATH",
-    "pathBinaryDesc": "This SDK is not managed by SVC yet. Its command currently resolves to:"
+    "pathBinaryDesc": "This SDK is not managed by SVC yet. Its command currently resolves to:",
+    "installExternalManagerWarn": "{{sdk}} on this machine is currently managed by {{manager}}. After this install, the SVC copy takes precedence via PATH; for day-to-day version switching we recommend keeping {{manager}}."
   },
   "progress": {
     "downloading": "Downloading...",
