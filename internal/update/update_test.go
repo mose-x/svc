@@ -256,3 +256,58 @@ func TestCleanStaleBackups(t *testing.T) {
 		}
 	})
 }
+
+// TestHasBackupForExe verifies the rollback-availability probe used by the
+// frontend to disable the rollback button instead of surfacing a
+// "no backup found" error on click.
+func TestHasBackupForExe(t *testing.T) {
+	t.Run("no backup", func(t *testing.T) {
+		dir := t.TempDir()
+		exe := filepath.Join(dir, "svc")
+		if err := os.WriteFile(exe, []byte("x"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if hasBackupForExe(exe) {
+			t.Error("hasBackupForExe = true; want false with no .bak present")
+		}
+	})
+
+	t.Run("canonical backup present", func(t *testing.T) {
+		dir := t.TempDir()
+		exe := filepath.Join(dir, "svc")
+		if err := os.WriteFile(exe+".bak", []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if !hasBackupForExe(exe) {
+			t.Error("hasBackupForExe = false; want true with canonical .bak")
+		}
+	})
+
+	t.Run("old-named backup counts", func(t *testing.T) {
+		dir := t.TempDir()
+		exe := filepath.Join(dir, "svc")
+		if err := os.WriteFile(filepath.Join(dir, "SDK Version Control.bak"), []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if !hasBackupForExe(exe) {
+			t.Error("hasBackupForExe = false; want true with an old-named .bak")
+		}
+	})
+
+	t.Run("directory named .bak does not count", func(t *testing.T) {
+		dir := t.TempDir()
+		exe := filepath.Join(dir, "svc")
+		if err := os.MkdirAll(exe+".bak", 0755); err != nil {
+			t.Fatal(err)
+		}
+		if hasBackupForExe(exe) {
+			t.Error("hasBackupForExe = true; want false when the .bak is a directory")
+		}
+	})
+
+	t.Run("empty exe path", func(t *testing.T) {
+		if hasBackupForExe("") {
+			t.Error("hasBackupForExe(\"\") = true; want false")
+		}
+	})
+}

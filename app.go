@@ -303,6 +303,16 @@ func (a *App) RollbackUpdate() error {
 	return a.updater.RollbackUpdate()
 }
 
+// HasUpdateBackup reports whether a rollback backup (.bak) exists for the
+// current binary. The frontend disables the rollback button when false so a
+// click can never surface the "no backup found" error.
+func (a *App) HasUpdateBackup() bool {
+	if a.updater == nil {
+		return false
+	}
+	return a.updater.HasBackup()
+}
+
 // GetPackageManagers lists the package managers available for an SDK.
 func (a *App) GetPackageManagers(sdkType string) []sdk.PackageManagerInfo {
 	return a.pkgmgrSvc.GetPackageManagers(sdkType)

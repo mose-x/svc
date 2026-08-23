@@ -86,6 +86,27 @@ func findBackupPath(currentExe string) string {
 	return canonical
 }
 
+// hasBackupForExe reports whether a rollback backup exists for the executable
+// at exe (canonical <exe>.bak or the newest old-named *.bak next to it).
+func hasBackupForExe(exe string) bool {
+	if exe == "" {
+		return false
+	}
+	info, err := os.Stat(findBackupPath(exe))
+	return err == nil && !info.IsDir()
+}
+
+// HasBackup reports whether a rollback backup exists for the running binary.
+// The frontend uses this to disable the rollback button instead of surfacing
+// a "no backup found" error when the user clicks it anyway.
+func (u *Updater) HasBackup() bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	return hasBackupForExe(exe)
+}
+
 // CleanStaleBackups removes old-named *.bak leftovers (e.g. a mac
 // "SDKVersionControl.bak" from a pre-rename version) sitting next to
 // currentExe, so an upgrade does not leave historical backups behind. It is
