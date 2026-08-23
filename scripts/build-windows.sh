@@ -29,9 +29,16 @@ esac
 # --- Bump about.json so the binary reports the correct version to CheckUpdate.
 jq --arg v "$VERSION" '.version = $v' about.json > about.json.tmp && mv about.json.tmp about.json
 # H11: Also bump wails.json and winres.json so all version sources stay in sync.
-jq --arg v "$VERSION" '.info.productVersion = $v' wails.json > wails.json.tmp && mv wails.json.tmp wails.json
-WIN_VER=$(echo "$VERSION" | awk -F. '{printf "%s.%s.%s.0", $1, $2, $3}')
-jq --arg v "$WIN_VER" '.RT_VERSION["#1"]["0000"].fixed.file_version = $v | .RT_VERSION["#1"]["0000"].fixed.product_version = $v | .RT_VERSION["#1"]["0000"].info["0409"].FileVersion = $v | .RT_VERSION["#1"]["0000"].info["0409"].ProductVersion = $v' winres/winres.json > winres/winres.json.tmp && mv winres/winres.json.tmp winres/winres.json
+# NSIS VIProductVersion/VIFileVersion (fed by wails.json productVersion via
+# wails_tools.nsh) and the winres VERSIONINFO "fixed" fields only accept
+# numeric X.X.X.X, so strip any prerelease/build suffix first
+# ("2.0.1-rc1" -> "2.0.1"); about.json and the asset names keep the full
+# version. Without this, tags like v2.0.1-rc1 abort makensis with
+# "invalid VIFileVersion format".
+BASE_VER="${VERSION%%[-+]*}"
+WIN_VER=$(echo "$BASE_VER" | awk -F. '{printf "%s.%s.%s.0", $1, $2, $3}')
+jq --arg v "$BASE_VER" '.info.productVersion = $v' wails.json > wails.json.tmp && mv wails.json.tmp wails.json
+jq --arg v "$WIN_VER" --arg full "$VERSION" '.RT_VERSION["#1"]["0000"].fixed.file_version = $v | .RT_VERSION["#1"]["0000"].fixed.product_version = $v | .RT_VERSION["#1"]["0000"].info["0409"].FileVersion = $full | .RT_VERSION["#1"]["0000"].info["0409"].ProductVersion = $full' winres/winres.json > winres/winres.json.tmp && mv winres/winres.json.tmp winres/winres.json
 echo "Version bumped to $VERSION in about.json, wails.json, winres.json"
 
 # R9: Restore exactly the files this script modifies so local builds don't leave
