@@ -265,32 +265,6 @@ func TestCheckCriticalFiles(t *testing.T) {
 	}
 }
 
-// TestDetectExternalManager pins the nvm / nvm-rust ownership detection that
-// blocks PATH imports of manager-owned Node.js copies.
-func TestDetectExternalManager(t *testing.T) {
-	tests := []struct {
-		name    string
-		sdkType sdk.SdkType
-		path    string
-		want    string
-	}{
-		{"nvm-rust shim dir", sdk.NodeJS, "/Users/mose/.nvm.rust/shims", "nvm-rust"},
-		{"nvm-rust binary", sdk.NodeJS, "/Users/mose/.nvm.rust/active/bin/node", "nvm-rust"},
-		{"classic nvm", sdk.NodeJS, "/Users/mose/.nvm/versions/node/v20.11.1/bin/node", "nvm"},
-		{"nvm-windows", sdk.NodeJS, `C:\Users\mose\AppData\Roaming\nvm\v20.11.1`, "nvm"},
-		{"standalone node", sdk.NodeJS, "/usr/local/bin/node", ""},
-		{"non-node sdk ignored", sdk.Python, "/Users/mose/.nvm.rust/shims", ""},
-		{"empty path", sdk.NodeJS, "", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := detectExternalManager(tt.sdkType, tt.path); got != tt.want {
-				t.Errorf("detectExternalManager(%q, %q) = %q; want %q", tt.sdkType, tt.path, got, tt.want)
-			}
-		})
-	}
-}
-
 // TestRejectUnimportableSource covers the import-entry guards: OS-protected
 // directories and external-manager-owned Node.js copies.
 func TestRejectUnimportableSource(t *testing.T) {

@@ -83,12 +83,20 @@ func (f *PythonFetcher) VerifyCommand() (string, []string) {
 //   - Linux /usr/bin/python3 (distro package, owned by package manager)
 //   - Windows Microsoft Store python.exe stub (WindowsApps alias)
 func IsSystemPythonPath(binPath string) bool {
+	return isSystemPythonPath(runtime.GOOS, binPath)
+}
+
+// isSystemPythonPath is the pure core (goos parameter) so tests can exercise
+// all platforms on any host.
+func isSystemPythonPath(goos, binPath string) bool {
 	if binPath == "" {
 		return false
 	}
-	p := filepath.ToSlash(binPath)
+	// ReplaceAll (not just filepath.ToSlash) so Windows backslash paths are
+	// normalized on non-Windows test hosts too.
+	p := strings.ReplaceAll(filepath.ToSlash(binPath), "\\", "/")
 	lower := strings.ToLower(p)
-	switch runtime.GOOS {
+	switch goos {
 	case "darwin":
 		// H7: prefixes are lowercase; match against the lowercased path so
 		// /System/ and /Library/ (capitalized on macOS) are caught.
@@ -341,14 +349,15 @@ func (f *PythonFetcher) GetLocalStatus() (*SdkStatus, error) {
 	pathBinary := ""
 	if !configured {
 		pathBinary = ResolveSystemCommand(cmdName)
-		// Windows ships a Microsoft Store stub (WindowsApps\python.exe) that
-		// opens the Store when executed. Skip detection, import and display
-		// for it entirely -- probing its version would pop up the Store.
-		if runtime.GOOS == "windows" && IsWindowsStorePython(pathBinary) {
+		// Central classification: the Windows Store stub is hidden entirely
+		// (executing it opens the Store), system copies are flagged so the
+		// UI hides the import action.
+		cl := ClassifyPathCopy(Python, pathBinary)
+		if cl.Hidden {
 			pathBinary = ""
 		}
 		pathConfigured = pathBinary != ""
-		if pathConfigured && IsSystemPythonPath(pathBinary) {
+		if pathConfigured && cl.SystemProtected {
 			systemProtected = true
 			systemPath = pathBinary
 		}

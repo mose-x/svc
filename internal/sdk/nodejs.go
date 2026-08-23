@@ -229,7 +229,7 @@ func (f *NodejsFetcher) GetLocalStatus() (*SdkStatus, error) {
 	externalManager := ""
 	if !configured {
 		pathBinary = ResolveSystemCommand("node")
-		externalManager = resolveNodeExternalManager(pathBinary)
+		externalManager = ClassifyPathCopy(NodeJS, pathBinary).ExternalManager
 	}
 
 	return &SdkStatus{

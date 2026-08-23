@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"svc/internal/config"
 	"svc/internal/extractor"
@@ -234,29 +233,20 @@ func (s *Service) ImportPathSdk(sdkTypeStr string) error {
 		return fmt.Errorf("%s not found in system PATH", cmdName)
 	}
 
-	// Node.js installed via nvm / nvm-rust resolves into the manager's home
-	// (~/.nvm, ~/.nvm.rust). Importing it would copy the manager's shim tree
-	// into SVC and fight the manager for PATH ownership. Refuse and guide the
-	// user to keep using that manager instead.
-	if mgr := detectExternalManager(sdkType, binPath); mgr != "" {
+	// Central classification backstop (single source of truth in
+	// sdk.ClassifyPathCopy, mirrors the UI): hidden stubs (Windows Store
+	// python), manager-owned copies (nvm / nvm-rust) and OS-protected
+	// locations (/usr/bin, C:\Windows, ...) can never be imported. Guards
+	// direct API calls and races where status predated the classification.
+	cl := sdk.ClassifyPathCopy(sdkType, binPath)
+	if cl.Hidden {
+		return fmt.Errorf("%s at %s cannot be detected or imported", cmdName, binPath)
+	}
+	if cl.ExternalManager != "" {
 		return fmt.Errorf("%s is managed by %s; please keep using %s to maintain it instead of importing into SVC",
-			cmdName, mgr, mgr)
+			cmdName, cl.ExternalManager, cl.ExternalManager)
 	}
-
-	// Refuse protected OS directories (e.g. /usr/bin) for every SDK type, not
-	// just Python: importing them would CopyDir an OS tree into the store.
-	if pathmgr.IsProtectedSystemDir(runtime.GOOS, filepath.Dir(binPath)) {
-		return fmt.Errorf("system %s is at %s (a protected OS path) and cannot be imported; please install %s via the app instead",
-			cmdName, binPath, f.Type())
-	}
-
-	// Python on macOS/Linux lives at /usr/bin/python3 (system-managed) and
-	// Windows Store ships a python.exe stub in WindowsApps. Importing either
-	// would CopyDir an OS directory (/usr, C:\Windows, ...) into the app's
-	// store. Refuse here as a backstop even though the UI already hides the
-	// import button for system-protected copies -- guards against direct API
-	// calls and races where the status was computed before this guard landed.
-	if sdk.IsSystemPythonPath(binPath) {
+	if cl.SystemProtected {
 		return fmt.Errorf("system %s is at %s (a protected OS path) and cannot be imported; please install %s via the app instead, the app-managed copy will take precedence via PATH priority",
 			cmdName, binPath, f.Type())
 	}
@@ -311,32 +301,20 @@ func (s *Service) ImportPathSdk(sdkTypeStr string) error {
 
 // rejectUnimportableSource refuses import sources that must never be copied
 // into the SVC store: OS-protected directories (/usr/bin, C:\Windows, ...)
-// for every SDK type, and Node.js copies owned by an external version manager
-// (nvm / nvm-rust) whose shim setup would fight SVC for PATH ownership.
-// isDir=false (archive file) skips the protected-directory check.
+// and copies owned by an external version manager (nvm / nvm-rust) whose shim
+// setup would fight SVC for PATH ownership. Central classification lives in
+// sdk.ClassifyPathCopy (single source of truth). Archive files (isDir=false)
+// are never PATH copies, so they skip the check.
 func rejectUnimportableSource(sdkType sdk.SdkType, p string, isDir bool) error {
-	if isDir && pathmgr.IsProtectedSystemDir(runtime.GOOS, p) {
+	if !isDir {
+		return nil
+	}
+	cl := sdk.ClassifyPathCopy(sdkType, p)
+	if cl.SystemProtected {
 		return fmt.Errorf("%s is a protected system directory and cannot be imported; please install the SDK via the app instead", p)
 	}
-	if mgr := detectExternalManager(sdkType, p); mgr != "" {
-		return fmt.Errorf("this copy is managed by %s; please keep using %s to maintain it instead of importing into SVC", mgr, mgr)
+	if cl.ExternalManager != "" {
+		return fmt.Errorf("this copy is managed by %s; please keep using %s to maintain it instead of importing into SVC", cl.ExternalManager, cl.ExternalManager)
 	}
 	return nil
-}
-
-// detectExternalManager reports the external version manager (nvm / nvm-rust)
-// owning the SDK copy at p (a binary file or its containing directory), or "".
-// Only Node.js has external-manager detection today. Symlinks are resolved so
-// a shim or alias link pointing into a manager home still matches.
-func detectExternalManager(sdkType sdk.SdkType, p string) string {
-	if sdkType != sdk.NodeJS || p == "" {
-		return ""
-	}
-	if mgr := sdk.DetectNodeExternalManager(p); mgr != "" {
-		return mgr
-	}
-	if resolved, err := filepath.EvalSymlinks(p); err == nil {
-		return sdk.DetectNodeExternalManager(resolved)
-	}
-	return ""
 }
