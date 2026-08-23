@@ -108,6 +108,7 @@
     "title": "System PATH Configuration",
     "system": "System",
     "import": "Import",
+    "importChoose": "Import…",
     "importing": "Importing...",
     "importConfirm": "Import {{sdk}} into SVC?",
     "importConfirmDesc": "This will copy {{path}} to the SVC managed directory and update environment variables.",
