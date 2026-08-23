@@ -225,27 +225,5 @@ func (f *AndroidFetcher) GetDownloadURL(version string) (string, string, error) 
 }
 
 func (f *AndroidFetcher) GetLocalStatus() (*SdkStatus, error) {
-	installed, _ := f.cfg.GetInstalledVersions(string(Android))
-	active := f.cfg.GetActiveVersion(string(Android))
-	configured := active != ""
-
-	needsSwitch := false
-	if active != "" {
-		found := false
-		for _, v := range installed {
-			if v == active {
-				found = true
-				break
-			}
-		}
-		needsSwitch = !found
-	}
-
-	return &SdkStatus{
-		SdkType: Android, DisplayName: SdkDisplayName(Android),
-		Configured: configured, PathConfigured: !configured && IsCommandAvailable("sdkmanager"),
-		CurrentVersion:    active,
-		InstalledVersions: installed, InstallPath: f.cfg.SdkDir(string(Android)),
-		NeedsSwitch: needsSwitch,
-	}, nil
+	return baseLocalStatus(f.cfg, Android, "sdkmanager"), nil
 }

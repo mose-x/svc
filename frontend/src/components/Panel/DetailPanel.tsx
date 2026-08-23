@@ -54,6 +54,8 @@ import {
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import { formatBytes } from '../../utils/format'
 import { externalManagerName } from '../../constants/sdk'
+import { confirmAction } from '../../utils/confirmAction'
+import { errMsg } from '../../utils/error'
 
 interface DetailPanelProps {
   status: SdkStatus | undefined
@@ -138,7 +140,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
         // Preserve the backend error reason so the UI can show what actually
         // failed (GitHub API 403 rate limit, proxy/network error, decode
         // error, etc.) instead of a generic "failed to load" message.
-        const reason = typeof e === 'string' ? e : e?.message || e?.error || ''
+        const reason = errMsg(e)
         setLoadErrorMessage(reason ? String(reason) : '')
         setLoadError(true)
       } finally {
@@ -298,7 +300,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
         fetchPackageManagers()
       })
       .catch((e: any) => {
-        msgApi.error(t('detail.installFail', { error: e?.message || e }))
+        msgApi.error(t('detail.installFail', { error: errMsg(e) }))
       })
       .finally(() => {
         setInstalling(false)
@@ -364,7 +366,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
           await onRefresh()
           fetchPackageManagers()
         } catch (e: any) {
-          msgApi.error(t('detail.switchFail', { error: e?.message || e }))
+          msgApi.error(t('detail.switchFail', { error: errMsg(e) }))
         } finally {
           setSwitching(false)
         }
@@ -437,17 +439,13 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
   // sidebar-only flow did.
   const handleImportPath = () => {
     if (!status) return
-    const ref = modal.confirm({
+    confirmAction({
+      modal,
       title: t('sidebar.importConfirm', { sdk: status.displayName }),
       content: t('sidebar.importConfirmDesc'),
       okText: t('app.confirm'),
       cancelText: t('app.cancel'),
-      maskClosable: false,
-      onOk: async () => {
-        ref.update({
-          cancelButtonProps: { disabled: true },
-          okButtonProps: { loading: true },
-        })
+      run: async () => {
         try {
           await ImportPathSdk(status.sdkType)
           msgApi.success(
@@ -456,23 +454,21 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
           onRefresh()
           fetchPackageManagers()
         } catch (e: any) {
-          msgApi.error(t('sidebar.importFail', { error: e?.message || e }))
-          ref.update({
-            cancelButtonProps: { disabled: false },
-            okButtonProps: { loading: false },
-          })
+          msgApi.error(t('sidebar.importFail', { error: errMsg(e) }))
           throw e
         }
       },
     })
   }
 
-  const handleImportFile = async () => {
+  const handleImportLocal = async (pick: 'file' | 'dir') => {
     if (!status) return
     setImporting(true)
     try {
-      const filePath = (await SelectLocalFile()) as string
-      if (!filePath) {
+      const selectedPath = (await (pick === 'file'
+        ? SelectLocalFile()
+        : SelectLocalDir())) as string
+      if (!selectedPath) {
         setImporting(false)
         return
       }
@@ -493,57 +489,12 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
         maskClosable: false,
         onOk: async () => {
           try {
-            await ImportLocalSdk(status.sdkType, filePath)
+            await ImportLocalSdk(status.sdkType, selectedPath)
             msgApi.success(t('detail.importSuccess'))
             onRefresh()
             fetchPackageManagers()
           } catch (e: any) {
-            msgApi.error(t('detail.importFail', { error: e?.message || e }))
-            ref.update({
-              cancelButtonProps: { disabled: false },
-              okButtonProps: { loading: false },
-            })
-            throw e
-          }
-        },
-      })
-    } finally {
-      setImporting(false)
-    }
-  }
-
-  const handleImportDir = async () => {
-    if (!status) return
-    setImporting(true)
-    try {
-      const dirPath = (await SelectLocalDir()) as string
-      if (!dirPath) {
-        setImporting(false)
-        return
-      }
-      const ref = modal.confirm({
-        title: t('detail.importingSdk', { sdk: status.displayName }),
-        content: (
-          <div style={{ textAlign: 'center', padding: '10px 0' }}>
-            <Spin />
-            <p style={{ marginTop: 8, color: '#888' }}>
-              {t('detail.importingDesc')}
-            </p>
-          </div>
-        ),
-        okText: t('app.confirm'),
-        cancelText: t('app.cancel'),
-        cancelButtonProps: { disabled: true },
-        okButtonProps: { loading: true },
-        maskClosable: false,
-        onOk: async () => {
-          try {
-            await ImportLocalSdk(status.sdkType, dirPath)
-            msgApi.success(t('detail.importSuccess'))
-            onRefresh()
-            fetchPackageManagers()
-          } catch (e: any) {
-            msgApi.error(t('detail.importFail', { error: e?.message || e }))
+            msgApi.error(t('detail.importFail', { error: errMsg(e) }))
             ref.update({
               cancelButtonProps: { disabled: false },
               okButtonProps: { loading: false },
@@ -564,7 +515,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
       msgApi.success(t('detail.pmInstallSuccess', { name }))
       fetchPackageManagers()
     } catch (e: any) {
-      msgApi.error(t('detail.pmInstallFail', { name, error: e?.message || e }))
+      msgApi.error(t('detail.pmInstallFail', { name, error: errMsg(e) }))
     } finally {
       setPmLoading('')
     }
@@ -577,7 +528,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
       msgApi.success(t('detail.pmUpdateSuccess', { name }))
       fetchPackageManagers()
     } catch (e: any) {
-      msgApi.error(t('detail.pmUpdateFail', { name, error: e?.message || e }))
+      msgApi.error(t('detail.pmUpdateFail', { name, error: errMsg(e) }))
     } finally {
       setPmLoading('')
     }
@@ -868,13 +819,13 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
                     key: 'file',
                     icon: <FileOutlined />,
                     label: t('detail.importFile'),
-                    onClick: handleImportFile,
+                    onClick: () => handleImportLocal('file'),
                   },
                   {
                     key: 'dir',
                     icon: <FolderOpenOutlined />,
                     label: t('detail.importDir'),
-                    onClick: handleImportDir,
+                    onClick: () => handleImportLocal('dir'),
                   },
                 ],
               }}

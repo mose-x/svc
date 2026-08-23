@@ -176,27 +176,5 @@ func (f *DotNetFetcher) GetDownloadURL(version string) (string, string, error) {
 }
 
 func (f *DotNetFetcher) GetLocalStatus() (*SdkStatus, error) {
-	installed, _ := f.cfg.GetInstalledVersions(string(DotNet))
-	active := f.cfg.GetActiveVersion(string(DotNet))
-	configured := active != ""
-
-	needsSwitch := false
-	if active != "" {
-		found := false
-		for _, v := range installed {
-			if v == active {
-				found = true
-				break
-			}
-		}
-		needsSwitch = !found
-	}
-
-	return &SdkStatus{
-		SdkType: DotNet, DisplayName: SdkDisplayName(DotNet),
-		Configured: configured, PathConfigured: !configured && IsCommandAvailable("dotnet"),
-		CurrentVersion:    active,
-		InstalledVersions: installed, InstallPath: f.cfg.SdkDir(string(DotNet)),
-		NeedsSwitch: needsSwitch,
-	}, nil
+	return baseLocalStatus(f.cfg, DotNet, "dotnet"), nil
 }

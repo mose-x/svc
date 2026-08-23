@@ -119,16 +119,7 @@ func (s *Service) ImportLocalSdk(sdkTypeStr string, localPath string) error {
 	// wrongly rejected complete SDKs as "SDK incomplete".
 	targetDir := s.cfg.SdkVersionDir(sdkTypeStr, versionName)
 	binDirs := f.GetBinDirs()
-	verifyImport := func(dir string) error {
-		postVer, err := s.detectVersionFromDir(dir, f)
-		if err != nil {
-			return fmt.Errorf("post-import verification failed: %w", err)
-		}
-		if postVer != versionName {
-			return fmt.Errorf("post-import version mismatch: expected %s, got %s", versionName, postVer)
-		}
-		return nil
-	}
+	verifyImport := s.postImportVerifier(f, versionName)
 	if err := copyToTargetAtomically(sourceDir, targetDir, binDirs, sdkType, verifyImport); err != nil {
 		return err
 	}
@@ -180,16 +171,7 @@ func (s *Service) ImportSdk(externalPath string, sdkType string) error {
 	// wrongly rejected complete SDKs as "SDK incomplete".
 	targetDir := s.cfg.SdkVersionDir(sdkType, versionName)
 	binDirs := f.GetBinDirs()
-	verifyImport := func(dir string) error {
-		postVer, err := s.detectVersionFromDir(dir, f)
-		if err != nil {
-			return fmt.Errorf("post-import verification failed: %w", err)
-		}
-		if postVer != versionName {
-			return fmt.Errorf("post-import version mismatch: expected %s, got %s", versionName, postVer)
-		}
-		return nil
-	}
+	verifyImport := s.postImportVerifier(f, versionName)
 	if err := copyToTargetAtomically(sdkRoot, targetDir, binDirs, sdk.SdkType(sdkType), verifyImport); err != nil {
 		return err
 	}
@@ -228,7 +210,7 @@ func (s *Service) ImportPathSdk(sdkTypeStr string) error {
 	}
 
 	cmdName, _ := f.VerifyCommand()
-	binPath := helpers.ResolveCommand(cmdName)
+	binPath := sdk.ResolveSystemCommand(cmdName)
 	if binPath == "" {
 		return fmt.Errorf("%s not found in system PATH", cmdName)
 	}
@@ -266,16 +248,7 @@ func (s *Service) ImportPathSdk(sdkTypeStr string) error {
 	// of Python on all platforms, Perl on Windows, JDK on macOS).
 	targetDir := s.cfg.SdkVersionDir(sdkTypeStr, versionName)
 	binDirs := f.GetBinDirs()
-	verifyImport := func(dir string) error {
-		postVer, err := s.detectVersionFromDir(dir, f)
-		if err != nil {
-			return fmt.Errorf("post-import verification failed: %w", err)
-		}
-		if postVer != versionName {
-			return fmt.Errorf("post-import version mismatch: expected %s, got %s", versionName, postVer)
-		}
-		return nil
-	}
+	verifyImport := s.postImportVerifier(f, versionName)
 	if err := copyToTargetAtomically(sdkRoot, targetDir, binDirs, sdkType, verifyImport); err != nil {
 		return err
 	}

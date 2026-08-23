@@ -372,27 +372,5 @@ func (f *FlutterFetcher) FetchChecksum(version string) (string, error) {
 }
 
 func (f *FlutterFetcher) GetLocalStatus() (*SdkStatus, error) {
-	installed, _ := f.cfg.GetInstalledVersions(string(Flutter))
-	active := f.cfg.GetActiveVersion(string(Flutter))
-	configured := active != ""
-
-	needsSwitch := false
-	if active != "" {
-		found := false
-		for _, v := range installed {
-			if v == active {
-				found = true
-				break
-			}
-		}
-		needsSwitch = !found
-	}
-
-	return &SdkStatus{
-		SdkType: Flutter, DisplayName: SdkDisplayName(Flutter),
-		Configured: configured, PathConfigured: !configured && IsCommandAvailable("flutter"),
-		CurrentVersion:    active,
-		InstalledVersions: installed, InstallPath: f.cfg.SdkDir(string(Flutter)),
-		NeedsSwitch: needsSwitch,
-	}, nil
+	return baseLocalStatus(f.cfg, Flutter, "flutter"), nil
 }

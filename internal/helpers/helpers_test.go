@@ -1,10 +1,7 @@
 package helpers
 
 import (
-	"path/filepath"
 	"testing"
-
-	"svc/internal/sdk"
 )
 
 func TestExtractVersionFromString(t *testing.T) {
@@ -29,46 +26,6 @@ func TestExtractVersionFromString(t *testing.T) {
 				t.Errorf("ExtractVersionFromString(%q) = %q; want %q", tt.input, got, tt.want)
 			}
 		})
-	}
-}
-
-// TestResolveCommandNotFoundReturnsEmpty verifies that ResolveCommand returns
-// "" when the command is not found in PATH (M3 fix). Previously it returned the
-// bare command name, which caused ImportPathSdk to copy the entire CWD.
-func TestResolveCommandNotFoundReturnsEmpty(t *testing.T) {
-	got := ResolveCommand("definitely_not_a_real_command_xyz123")
-	if got != "" {
-		t.Errorf("ResolveCommand(nonexistent) = %q; want \"\"", got)
-	}
-}
-
-// TestResolveCommandExcludesShimsDir verifies that the shims exclusion logic
-// used by ResolveCommand correctly identifies SVC shims paths.
-func TestResolveCommandExcludesShimsDir(t *testing.T) {
-	shimsDir := sdk.SvcShimsDir()
-	if shimsDir == "" {
-		t.Fatal("SvcShimsDir() returned empty string")
-	}
-
-	// IsShimsDirEntry: a PATH entry equal to shimsDir should be excluded
-	if !sdk.IsShimsDirEntry(shimsDir, shimsDir) {
-		t.Errorf("IsShimsDirEntry(shimsDir, shimsDir) = false; want true")
-	}
-	// A different directory should NOT be excluded
-	otherDir := filepath.Join(t.TempDir(), "other")
-	if sdk.IsShimsDirEntry(otherDir, shimsDir) {
-		t.Errorf("IsShimsDirEntry(otherDir, shimsDir) = true; want false")
-	}
-
-	// IsShimsPath: a binary inside shimsDir should be detected
-	shimBinary := filepath.Join(shimsDir, "go.exe")
-	if !sdk.IsShimsPath(shimBinary, shimsDir) {
-		t.Errorf("IsShimsPath(%s, %s) = false; want true", shimBinary, shimsDir)
-	}
-	// A binary outside shimsDir should NOT be detected
-	externalBinary := filepath.Join(otherDir, "go.exe")
-	if sdk.IsShimsPath(externalBinary, shimsDir) {
-		t.Errorf("IsShimsPath(%s, %s) = true; want false", externalBinary, shimsDir)
 	}
 }
 

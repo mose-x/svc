@@ -2,13 +2,13 @@ package pathmgr
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"svc/internal/config"
+	"svc/internal/fsutil"
 	"svc/internal/sdk"
 )
 
@@ -240,44 +240,6 @@ func DeduplicateEntries(entries []PathEntry) []PathEntry {
 	return result
 }
 
-// CopyDir recursively copies a directory
-func CopyDir(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		relPath, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		dstPath := filepath.Join(dst, relPath)
-		if info.IsDir() {
-			return os.MkdirAll(dstPath, info.Mode())
-		}
-		return copyFile(path, dstPath, info.Mode())
-	})
-}
-
-func copyFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
-	if err != nil {
-		return err
-	}
-	// M2: Surface Close errors (e.g. disk full during flush) — previously
-	// dropped via defer out.Close(), hiding the real cause of a corrupt copy.
-	_, err = io.Copy(out, in)
-	if cerr := out.Close(); cerr != nil && err == nil {
-		err = cerr
-	}
-	return err
-}
-
 // GetDesktopDir returns the current user's desktop directory (cross-platform).
 // If no Desktop directory exists it falls back to the home directory WITHOUT
 // creating one — item 13 previously created ~/Desktop as a side effect, which
@@ -380,7 +342,7 @@ func BackupDir(src string) (string, error) {
 		backupPath = filepath.Join(desktop, fmt.Sprintf("%s_%d", backupName, time.Now().UnixNano()%10000))
 	}
 
-	if err := CopyDir(src, backupPath); err != nil {
+	if err := fsutil.CopyDir(src, backupPath); err != nil {
 		return "", fmt.Errorf("failed to backup directory: %w", err)
 	}
 

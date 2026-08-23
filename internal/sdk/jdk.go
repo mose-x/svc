@@ -192,32 +192,7 @@ func (f *JdkFetcher) GetDownloadURL(version string) (string, string, error) {
 }
 
 func (f *JdkFetcher) GetLocalStatus() (*SdkStatus, error) {
-	installed, _ := f.cfg.GetInstalledVersions(string(JDK))
-	active := f.cfg.GetActiveVersion(string(JDK))
-	configured := active != ""
-
-	needsSwitch := false
-	if active != "" {
-		found := false
-		for _, v := range installed {
-			if v == active {
-				found = true
-				break
-			}
-		}
-		needsSwitch = !found
-	}
-
-	return &SdkStatus{
-		SdkType:           JDK,
-		DisplayName:       SdkDisplayName(JDK),
-		Configured:        configured,
-		PathConfigured:    !configured && IsCommandAvailable("java"),
-		CurrentVersion:    active,
-		InstalledVersions: installed,
-		InstallPath:       f.cfg.SdkDir(string(JDK)),
-		NeedsSwitch:       needsSwitch,
-	}, nil
+	return baseLocalStatus(f.cfg, JDK, "java"), nil
 }
 
 func (f *JdkFetcher) osParam() string {

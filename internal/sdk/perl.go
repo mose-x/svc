@@ -260,29 +260,7 @@ func (f *PerlFetcher) GetDownloadURL(version string) (string, string, error) {
 }
 
 func (f *PerlFetcher) GetLocalStatus() (*SdkStatus, error) {
-	installed, _ := f.cfg.GetInstalledVersions(string(Perl))
-	active := f.cfg.GetActiveVersion(string(Perl))
-	configured := active != ""
-
-	needsSwitch := false
-	if active != "" {
-		found := false
-		for _, v := range installed {
-			if v == active {
-				found = true
-				break
-			}
-		}
-		needsSwitch = !found
-	}
-
-	return &SdkStatus{
-		SdkType: Perl, DisplayName: SdkDisplayName(Perl),
-		Configured: configured, PathConfigured: !configured && IsCommandAvailable("perl"),
-		CurrentVersion:    active,
-		InstalledVersions: installed, InstallPath: f.cfg.SdkDir(string(Perl)),
-		NeedsSwitch: needsSwitch,
-	}, nil
+	return baseLocalStatus(f.cfg, Perl, "perl"), nil
 }
 
 // FetchChecksum returns the SHA256 of the Perl archive for the given version.

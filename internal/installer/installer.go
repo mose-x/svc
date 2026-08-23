@@ -159,7 +159,7 @@ func completePathInfo(status *sdk.SdkStatus, f sdk.VersionFetcher) {
 	}
 	if status.PathBinary == "" {
 		cmd, _ := f.VerifyCommand()
-		status.PathBinary = helpers.ResolveCommand(cmd)
+		status.PathBinary = sdk.ResolveSystemCommand(cmd)
 	}
 }
 

@@ -58,6 +58,7 @@ import {
 } from '../../../wailsjs/go/main/App'
 import { BrowserOpenURL, EventsOn } from '../../../wailsjs/runtime/runtime'
 import { SDK_CATEGORIES } from '../../constants/sdk'
+import { errMsg } from '../../utils/error'
 import { formatBytes } from '../../utils/format'
 
 interface AppSettings {
@@ -277,7 +278,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
       setLogContent(content || '')
     } catch (e: any) {
       if (seq !== logRequestSeq.current) return
-      msgApi.error(e?.message || e)
+      msgApi.error(errMsg(e))
     }
   }
 
@@ -295,7 +296,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
           msgApi.success(t('logs.cleanSuccess'))
           loadLogFiles()
         } catch (e: any) {
-          msgApi.error(t('logs.cleanFail', { error: e?.message || e }))
+          msgApi.error(t('logs.cleanFail', { error: errMsg(e) }))
         } finally {
           setCleaningLogs(false)
         }
@@ -316,7 +317,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
           msgApi.success(t('logs.deleteSuccess'))
           loadLogFiles()
         } catch (e: any) {
-          msgApi.error(t('logs.deleteFail', { error: e?.message || e }))
+          msgApi.error(t('logs.deleteFail', { error: errMsg(e) }))
         }
       },
     })
@@ -343,7 +344,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
       msgApi.success(t('settings.proxyCheckSuccess', { target: label }))
     } catch (e: any) {
       msgApi.error(
-        t('settings.proxyCheckFail', { target: label, error: e?.message || e }),
+        t('settings.proxyCheckFail', { target: label, error: errMsg(e) }),
       )
     } finally {
       setCheckingProxy((prev) => ({ ...prev, [target]: false }))
@@ -357,110 +358,55 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
       msgApi.success(t('settings.cleanSuccess'))
       loadTmpCacheSize()
     } catch (e: any) {
-      msgApi.error(e?.message || e)
+      msgApi.error(errMsg(e))
     } finally {
       setCleaning(false)
     }
   }
 
-  const handleThemeChange = (theme: string) => {
-    const newSettings = { ...settings, theme } as any
+  // Single save path for every "change one setting" control: merge the
+  // patch into the current settings, persist, then toast. afterSave runs
+  // once the backend confirms the save (theme/language side effects hook in
+  // here).
+  const updateSettings = (
+    patch: Partial<AppSettings>,
+    afterSave?: () => void,
+  ) => {
+    const newSettings = { ...settings, ...patch } as any
     setSettings(newSettings)
     SaveSettings(newSettings)
       .then(() => {
-        onThemeChange(theme)
+        afterSave?.()
         msgApi.success(t('settings.settingsSaved'))
       })
       .catch((e: any) =>
-        msgApi.error(t('settings.saveFail', { error: e?.message || e })),
+        msgApi.error(t('settings.saveFail', { error: errMsg(e) })),
       )
   }
 
-  const handleLanguageChange = (lang: string) => {
-    const newSettings = { ...settings, language: lang } as any
-    setSettings(newSettings)
-    SaveSettings(newSettings)
-      .then(() => {
-        i18n.changeLanguage(lang)
-        onLanguageChange(lang)
-        msgApi.success(t('settings.settingsSaved'))
-      })
-      .catch((e: any) =>
-        msgApi.error(t('settings.saveFail', { error: e?.message || e })),
-      )
-  }
+  const handleThemeChange = (theme: string) =>
+    updateSettings({ theme }, () => onThemeChange(theme))
 
-  const handleProxyToggle = (enabled: boolean) => {
-    const newSettings = {
-      ...settings,
-      proxy: { ...settings.proxy, enabled },
-    } as any
-    setSettings(newSettings)
-    SaveSettings(newSettings)
-      .then(() => {
-        msgApi.success(t('settings.settingsSaved'))
-      })
-      .catch((e: any) =>
-        msgApi.error(t('settings.saveFail', { error: e?.message || e })),
-      )
-  }
+  const handleLanguageChange = (lang: string) =>
+    updateSettings({ language: lang }, () => {
+      i18n.changeLanguage(lang)
+      onLanguageChange(lang)
+    })
 
-  const handleProxyModeChange = (mode: string) => {
-    const newSettings = {
-      ...settings,
-      proxy: { ...settings.proxy, mode },
-    } as any
-    setSettings(newSettings)
-    SaveSettings(newSettings)
-      .then(() => {
-        msgApi.success(t('settings.settingsSaved'))
-      })
-      .catch((e: any) =>
-        msgApi.error(t('settings.saveFail', { error: e?.message || e })),
-      )
-  }
+  const handleProxyToggle = (enabled: boolean) =>
+    updateSettings({ proxy: { ...settings.proxy, enabled } })
 
-  const handleProxyUrlChange = (url: string) => {
-    const newSettings = {
-      ...settings,
-      proxy: { ...settings.proxy, url },
-    } as any
-    setSettings(newSettings)
-    SaveSettings(newSettings)
-      .then(() => {
-        msgApi.success(t('settings.settingsSaved'))
-      })
-      .catch((e: any) =>
-        msgApi.error(t('settings.saveFail', { error: e?.message || e })),
-      )
-  }
+  const handleProxyModeChange = (mode: string) =>
+    updateSettings({ proxy: { ...settings.proxy, mode } })
 
-  const handleProxyProtocolChange = (protocol: string) => {
-    const newSettings = {
-      ...settings,
-      proxy: { ...settings.proxy, protocol },
-    } as any
-    setSettings(newSettings)
-    SaveSettings(newSettings)
-      .then(() => {
-        msgApi.success(t('settings.settingsSaved'))
-      })
-      .catch((e: any) =>
-        msgApi.error(t('settings.saveFail', { error: e?.message || e })),
-      )
-  }
+  const handleProxyUrlChange = (url: string) =>
+    updateSettings({ proxy: { ...settings.proxy, url } })
 
-  const handleGithubMirrorChange = (url: string) => {
-    const newSettings = { ...settings, githubMirror: url } as any
-    setSettings(newSettings)
-    SaveSettings(newSettings)
-      .then(() => {
-        msgApi.success(t('settings.settingsSaved'))
-      })
-      .catch((e: any) =>
-        msgApi.error(t('settings.saveFail', { error: e?.message || e })),
-      )
-  }
+  const handleProxyProtocolChange = (protocol: string) =>
+    updateSettings({ proxy: { ...settings.proxy, protocol } })
+
+  const handleGithubMirrorChange = (url: string) =>
+    updateSettings({ githubMirror: url })
 
   // GitHub Token: stored base64 on the backend, returned masked (first6***last6)
   // by GetSettings. The raw token is never held in frontend state -- the edit
@@ -486,9 +432,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
         msgApi.success(t('settings.githubTokenSaved'))
       })
       .catch((e: any) => {
-        msgApi.error(
-          t('settings.githubTokenSaveFail', { error: e?.message || e }),
-        )
+        msgApi.error(t('settings.githubTokenSaveFail', { error: errMsg(e) }))
       })
   }
 
@@ -511,23 +455,14 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
             msgApi.success(t('settings.githubTokenCleared'))
           })
           .catch((e: any) => {
-            msgApi.error(e?.message || e)
+            msgApi.error(errMsg(e))
           })
       },
     })
   }
 
-  const handleDownloadThreadsChange = (threads: number) => {
-    const newSettings = { ...settings, downloadThreads: threads } as any
-    setSettings(newSettings)
-    SaveSettings(newSettings)
-      .then(() => {
-        msgApi.success(t('settings.settingsSaved'))
-      })
-      .catch((e: any) =>
-        msgApi.error(t('settings.saveFail', { error: e?.message || e })),
-      )
-  }
+  const handleDownloadThreadsChange = (threads: number) =>
+    updateSettings({ downloadThreads: threads })
 
   const handleCheckUpdate = async () => {
     setChecking(true)
@@ -546,7 +481,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
         msgApi.success(t('about.upToDate'))
       }
     } catch (e: any) {
-      msgApi.error(t('about.checkUpdateFail', { error: e?.message || e }))
+      msgApi.error(t('about.checkUpdateFail', { error: errMsg(e) }))
     } finally {
       setChecking(false)
     }
@@ -571,7 +506,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
         try {
           await RollbackUpdate()
         } catch (e: any) {
-          msgApi.error(t('settings.rollbackFail', { error: e?.message || e }))
+          msgApi.error(t('settings.rollbackFail', { error: errMsg(e) }))
         }
       },
     })
@@ -600,9 +535,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
           setSettings((prev) => ({ ...prev, installPath: newPath }))
           msgApi.success(t('settings.installPathSuccess'))
         } catch (e: any) {
-          msgApi.error(
-            t('settings.installPathFail', { error: e?.message || e }),
-          )
+          msgApi.error(t('settings.installPathFail', { error: errMsg(e) }))
         } finally {
           setMigrating(false)
         }
@@ -628,9 +561,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
           setSettings((prev) => ({ ...prev, installPath: defaultInstallPath }))
           msgApi.success(t('settings.installPathSuccess'))
         } catch (e: any) {
-          msgApi.error(
-            t('settings.installPathFail', { error: e?.message || e }),
-          )
+          msgApi.error(t('settings.installPathFail', { error: errMsg(e) }))
         } finally {
           setMigrating(false)
         }
@@ -669,7 +600,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
             msgApi.success(t('settings.settingsSaved'))
           })
           .catch((e: any) =>
-            msgApi.error(t('settings.saveFail', { error: e?.message || e })),
+            msgApi.error(t('settings.saveFail', { error: errMsg(e) })),
           )
       },
     })
@@ -699,7 +630,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
             msgApi.success(t('settings.settingsSaved'))
           })
           .catch((e: any) =>
-            msgApi.error(t('settings.saveFail', { error: e?.message || e })),
+            msgApi.error(t('settings.saveFail', { error: errMsg(e) })),
           )
       },
     })
@@ -1488,7 +1419,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
                       await ApplyUpdate()
                     } catch (e: any) {
                       msgApi.error(
-                        t('about.applyUpdateFail', { error: e?.message || e }),
+                        t('about.applyUpdateFail', { error: errMsg(e) }),
                       )
                     }
                   }}
@@ -1534,7 +1465,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
                       } catch (e: any) {
                         setDownloading(false)
                         msgApi.error(
-                          t('about.downloadFail', { error: e?.message || e }),
+                          t('about.downloadFail', { error: errMsg(e) }),
                         )
                       }
                     }}

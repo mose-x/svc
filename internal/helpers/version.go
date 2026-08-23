@@ -26,7 +26,7 @@ func ExtractVersionFromString(s string) string {
 // args, extracting a version string from its output. Returns "" when the
 // command is missing, fails, or prints no recognizable version.
 func ExtractVersionFromOutput(cmd string, args []string) string {
-	fullPath := ResolveCommand(cmd)
+	fullPath := sdk.ResolveSystemCommand(cmd)
 	if fullPath == "" {
 		return ""
 	}
