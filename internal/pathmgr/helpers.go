@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -113,62 +112,6 @@ func sliceContains(s []string, v string) bool {
 // directory would CopyDir an OS tree (/usr, C:\Windows, ...) into the app's
 // storage. goos selects the platform rules, keeping the function testable on
 // any host.
-func IsProtectedSystemDir(goos, dir string) bool {
-	if dir == "" {
-		return false
-	}
-	// ReplaceAll (not just filepath.ToSlash) so Windows backslash paths are
-	// normalized on non-Windows test hosts too. Clean first with the host
-	// separator semantics, then normalize both separators for matching.
-	p := strings.ToLower(strings.ReplaceAll(filepath.ToSlash(filepath.Clean(dir)), "\\", "/"))
-	var prefixes []string
-	switch goos {
-	case "darwin":
-		prefixes = []string{"/usr/bin", "/bin", "/sbin", "/system", "/library/developer"}
-	case "linux":
-		prefixes = []string{"/usr/bin", "/usr/sbin", "/bin", "/sbin", "/usr/lib", "/lib"}
-	case "windows":
-		return strings.HasPrefix(p, "c:/windows") ||
-			strings.Contains(p, "microsoft/windowsapps")
-	default:
-		return false
-	}
-	for _, prefix := range prefixes {
-		if p == prefix || strings.HasPrefix(p, prefix+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-// detectEntryExternalManager reports whether the SDK binary that dir provides
-// belongs to an external version manager (nvm / nvm-rust for Node.js), so the
-// UI can tell the user to keep using that tool instead of importing. Returns
-// "" for standalone copies and non-Node SDK types.
-func detectEntryExternalManager(dir, sdkType string) string {
-	if sdkType != "nodejs" {
-		return ""
-	}
-	var bin string
-	for _, name := range []string{"node", "node.exe"} {
-		p := filepath.Join(dir, name)
-		if _, err := os.Stat(p); err == nil {
-			bin = p
-			break
-		}
-	}
-	if bin == "" {
-		return ""
-	}
-	if mgr := sdk.DetectNodeExternalManager(bin); mgr != "" {
-		return mgr
-	}
-	if resolved, err := filepath.EvalSymlinks(bin); err == nil {
-		return sdk.DetectNodeExternalManager(resolved)
-	}
-	return ""
-}
-
 // buildUnmanagedEntries expands a non-SVC PATH directory into display
 // entries: one per SDK type whose binaries the directory provides. SDK types
 // already managed by SVC (active version set) are dropped: under the shims
@@ -182,17 +125,22 @@ func buildUnmanagedEntries(p string, cfg *config.Config) []PathEntry {
 	if len(sdkTypes) == 0 {
 		return []PathEntry{{Path: p}}
 	}
-	protected := IsProtectedSystemDir(runtime.GOOS, p)
 	var entries []PathEntry
 	for _, st := range sdkTypes {
 		if cfg != nil && cfg.GetActiveVersion(st) != "" {
 			continue // SVC already manages this SDK type
 		}
+		// Central classification (protected OS dirs, external managers,
+		// hidden stubs) -- single source of truth in the sdk package.
+		cl := sdk.ClassifyPathCopy(sdk.SdkType(st), p)
+		if cl.Hidden {
+			continue
+		}
 		entries = append(entries, PathEntry{
 			Path:            p,
 			SdkType:         st,
-			SystemProtected: protected,
-			ExternalManager: detectEntryExternalManager(p, st),
+			SystemProtected: cl.SystemProtected,
+			ExternalManager: cl.ExternalManager,
 		})
 	}
 	return entries

@@ -7,46 +7,8 @@ import (
 	"testing"
 
 	"svc/internal/config"
+	"svc/internal/sdk"
 )
-
-func TestIsProtectedSystemDir(t *testing.T) {
-	tests := []struct {
-		name string
-		goos string
-		dir  string
-		want bool
-	}{
-		// macOS
-		{"darwin /usr/bin", "darwin", "/usr/bin", true},
-		{"darwin /bin", "darwin", "/bin", true},
-		{"darwin /sbin", "darwin", "/sbin", true},
-		{"darwin system cryptex", "darwin", "/System/Cryptexes/App/usr/bin", true},
-		{"darwin CLT usr bin", "darwin", "/Library/Developer/CommandLineTools/usr/bin", true},
-		{"darwin homebrew stays importable", "darwin", "/usr/local/bin", false},
-		{"darwin opt homebrew", "darwin", "/opt/homebrew/bin", false},
-		{"darwin prefix boundary", "darwin", "/usr/binx", false},
-		// Linux
-		{"linux /usr/bin", "linux", "/usr/bin", true},
-		{"linux /bin", "linux", "/bin", true},
-		{"linux /usr/lib", "linux", "/usr/lib", true},
-		{"linux /usr/local/bin stays importable", "linux", "/usr/local/bin", false},
-		{"linux snap", "linux", "/snap/bin", false},
-		// Windows
-		{"windows system32", "windows", `C:\Windows\System32`, true},
-		{"windows store stubs", "windows", `C:\Users\mose\AppData\Local\Microsoft\WindowsApps`, true},
-		{"windows program files node", "windows", `C:\Program Files\nodejs`, false},
-		// Edge cases
-		{"empty dir", "darwin", "", false},
-		{"unknown goos", "plan9", "/usr/bin", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsProtectedSystemDir(tt.goos, tt.dir); got != tt.want {
-				t.Errorf("IsProtectedSystemDir(%q, %q) = %v; want %v", tt.goos, tt.dir, got, tt.want)
-			}
-		})
-	}
-}
 
 // newFakeConfig builds a Config rooted in a temp HOME without touching the
 // real ~/.svc (HOME covers unix, USERPROFILE covers Windows CI).
@@ -141,7 +103,7 @@ func TestBuildUnmanagedEntriesFlagsSystemDirs(t *testing.T) {
 	// importable dirs, so assert the flag directly via IsProtectedSystemDir
 	// and only assert entry flags when SDK binaries were detected.
 	entries := buildUnmanagedEntries(dir, nil)
-	if !IsProtectedSystemDir(runtime.GOOS, dir) {
+	if !sdk.IsProtectedSystemDir(runtime.GOOS, dir) {
 		t.Fatalf("expected %q to be protected on %s", dir, runtime.GOOS)
 	}
 	for _, e := range entries {
@@ -151,32 +113,30 @@ func TestBuildUnmanagedEntriesFlagsSystemDirs(t *testing.T) {
 	}
 }
 
-func TestDetectEntryExternalManager(t *testing.T) {
+// TestBuildUnmanagedEntriesFlagsExternalManager verifies manager-owned node
+// dirs (nvm / nvm-rust) surface the ExternalManager flag via the central
+// sdk.ClassifyPathCopy classification.
+func TestBuildUnmanagedEntriesFlagsExternalManager(t *testing.T) {
 	home := t.TempDir()
 
 	nvmRustDir := filepath.Join(home, ".nvm.rust", "shims")
 	writeNodeDir(t, nvmRustDir)
-	if got := detectEntryExternalManager(nvmRustDir, "nodejs"); got != "nvm-rust" {
-		t.Errorf("nvm-rust dir: got %q; want %q", got, "nvm-rust")
+	entries := buildUnmanagedEntries(nvmRustDir, nil)
+	if len(entries) != 1 || entries[0].ExternalManager != "nvm-rust" {
+		t.Fatalf("entries = %+v; want one nodejs entry managed by nvm-rust", entries)
 	}
 
 	nvmDir := filepath.Join(home, ".nvm", "versions", "node", "v20.11.1", "bin")
 	writeNodeDir(t, nvmDir)
-	if got := detectEntryExternalManager(nvmDir, "nodejs"); got != "nvm" {
-		t.Errorf("nvm dir: got %q; want %q", got, "nvm")
+	entries = buildUnmanagedEntries(nvmDir, nil)
+	if len(entries) != 1 || entries[0].ExternalManager != "nvm" {
+		t.Fatalf("entries = %+v; want one nodejs entry managed by nvm", entries)
 	}
 
 	plainDir := filepath.Join(home, "standalone", "bin")
 	writeNodeDir(t, plainDir)
-	if got := detectEntryExternalManager(plainDir, "nodejs"); got != "" {
-		t.Errorf("standalone dir: got %q; want empty", got)
-	}
-
-	if got := detectEntryExternalManager(nvmRustDir, "python"); got != "" {
-		t.Errorf("non-node sdk: got %q; want empty", got)
-	}
-
-	if got := detectEntryExternalManager(filepath.Join(home, "no-node"), "nodejs"); got != "" {
-		t.Errorf("missing node binary: got %q; want empty", got)
+	entries = buildUnmanagedEntries(plainDir, nil)
+	if len(entries) != 1 || entries[0].ExternalManager != "" || entries[0].SystemProtected {
+		t.Fatalf("entries = %+v; want a plain importable nodejs entry", entries)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -46,5 +47,29 @@ func detectShellPath() string {
 	if err != nil || len(out) == 0 {
 		return ""
 	}
-	return string(out)
+	return sanitizeShellPath(string(out))
+}
+
+// sanitizeShellPath filters garbage out of a PATH string captured from a
+// login shell. Interactive rc files may print banners to stdout (e.g.
+// "Restored session: Sun Aug 23 ..."), which end up in the captured output
+// as fake PATH segments. Only absolute, whitespace-free directories survive.
+func sanitizeShellPath(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	var kept []string
+	for _, seg := range strings.Split(raw, ":") {
+		if seg == "" {
+			continue
+		}
+		if !strings.HasPrefix(seg, "/") {
+			continue
+		}
+		if strings.ContainsAny(seg, " \t\n\r") {
+			continue
+		}
+		kept = append(kept, seg)
+	}
+	return strings.Join(kept, ":")
 }
