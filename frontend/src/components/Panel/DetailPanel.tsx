@@ -315,7 +315,19 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
         sdk: status.displayName,
         version,
       }),
-      content: t('detail.confirmInstallDesc', { version }),
+      content: status.externalManager ? (
+        <div>
+          <p>{t('detail.confirmInstallDesc', { version })}</p>
+          <p style={{ color: '#faad14' }}>
+            {t('detail.installExternalManagerWarn', {
+              sdk: status.displayName,
+              manager: externalManagerName(status.externalManager),
+            })}
+          </p>
+        </div>
+      ) : (
+        t('detail.confirmInstallDesc', { version })
+      ),
       okText: t('app.confirm'),
       cancelText: t('app.cancel'),
       maskClosable: false,
