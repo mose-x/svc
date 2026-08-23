@@ -8,6 +8,8 @@ import {
   sdkDisplayNames,
   externalManagerName,
 } from '../../constants/sdk'
+import { confirmAction } from '../../utils/confirmAction'
+import { errMsg } from '../../utils/error'
 
 interface PathEntry {
   path: string
@@ -90,17 +92,13 @@ const PathModal: React.FC<PathModalProps> = ({ open, onClose, onRefresh }) => {
   const handleImport = (path: string, sdkType: string) => {
     if (!sdkType) return
     const sdkName = sdkDisplayNames[sdkType] || sdkType
-    const ref = modal.confirm({
+    confirmAction({
+      modal,
       title: t('path.importConfirm', { sdk: sdkName }),
       content: t('path.importConfirmDesc', { path }),
       okText: t('app.confirm'),
       cancelText: t('app.cancel'),
-      maskClosable: false,
-      onOk: async () => {
-        ref.update({
-          cancelButtonProps: { disabled: true },
-          okButtonProps: { loading: true },
-        })
+      run: async () => {
         setImporting(path)
         try {
           await ImportSdk(path, sdkType)
@@ -108,11 +106,7 @@ const PathModal: React.FC<PathModalProps> = ({ open, onClose, onRefresh }) => {
           fetchEntries()
           onRefresh()
         } catch (e: any) {
-          msgApi.error(t('path.importFail', { error: e?.message || e }))
-          ref.update({
-            cancelButtonProps: { disabled: false },
-            okButtonProps: { loading: false },
-          })
+          msgApi.error(t('path.importFail', { error: errMsg(e) }))
           throw e
         } finally {
           setImporting(null)
