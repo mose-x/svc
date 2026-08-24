@@ -939,7 +939,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
 
           <Divider />
 
-          {/* Install Path */}
+          {/* SDK Config Path */}
           <div className="settings-section">
             <div className="settings-label">
               <FolderOutlined style={{ marginRight: 8 }} />
