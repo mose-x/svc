@@ -85,6 +85,9 @@ const PathModal: React.FC<PathModalProps> = ({ open, onClose, onRefresh }) => {
 
   useEffect(() => {
     if (open) {
+      // Load-on-open: setLoading(true) fires synchronously but the fetch is
+      // the whole point of this effect.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       fetchEntries()
     }
   }, [open, fetchEntries])
