@@ -194,6 +194,24 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
     }
   }, [updateInfo])
 
+  const loadTmpCacheSize = () => {
+    GetTmpCacheSize()
+      .then((size) => setTmpCacheSize(size || 0))
+      .catch(() => {})
+  }
+
+  const loadLogFiles = () => {
+    setLoadingLogs(true)
+    GetLogFiles()
+      .then((files: any[]) => {
+        setLogFiles(files || [])
+      })
+      .catch(() => {})
+      .finally(() => {
+        setLoadingLogs(false)
+      })
+  }
+
   useEffect(() => {
     GetSettings()
       .then((s) => {
@@ -238,29 +256,14 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
       })
       .catch((e) => console.error('Failed to load endpoints:', e))
     loadTmpCacheSize()
+    // Mount-time fetch; setLoadingLogs(true) fires synchronously inside
+    // loadLogFiles, which is the intended loading indicator.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadLogFiles()
     GetLogDir()
       .then((d: string) => setLogDir(d || ''))
       .catch((e) => console.error('Failed to load log dir:', e))
   }, [])
-
-  const loadTmpCacheSize = () => {
-    GetTmpCacheSize()
-      .then((size) => setTmpCacheSize(size || 0))
-      .catch(() => {})
-  }
-
-  const loadLogFiles = () => {
-    setLoadingLogs(true)
-    GetLogFiles()
-      .then((files: any[]) => {
-        setLogFiles(files || [])
-      })
-      .catch(() => {})
-      .finally(() => {
-        setLoadingLogs(false)
-      })
-  }
 
   // Monotonic request sequence: when the user switches log files quickly, a
   // slow response for an earlier file must not overwrite the content of the

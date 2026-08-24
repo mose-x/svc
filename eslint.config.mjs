@@ -1,9 +1,7 @@
-// Minimal ESLint flat config so the code-hooks `nodejs:lint` stage can run
-// without erroring on a project that has no lint rules configured yet.
-// ESLint v9 requires eslint.config.js | .mjs | .cjs at the repo root;
-// without it `npx eslint <files>` exits non-zero and blocks every commit
-// that touches .ts/.tsx/.js/.json. An empty config array ([{}]) makes ESLint
-// parse files but apply zero rules, so it exits 0 (warnings only for files
-// outside the configured file patterns). Upgrade this to a real rule set
-// when the project adopts a linting policy.
-export default [{}]
+// The pre-commit hook runs `npx eslint <files>` from the repo root, but the
+// frontend toolchain (eslint + plugins) lives in frontend/node_modules.
+// Re-export the frontend config: Node resolves its bare imports
+// (typescript-eslint, eslint-plugin-*) relative to frontend/eslint.config.js,
+// so no root node_modules is needed. Flat-config file/ignore patterns are
+// slash-less globs and match at any depth, so they still cover frontend/.
+export { default } from './frontend/eslint.config.js'

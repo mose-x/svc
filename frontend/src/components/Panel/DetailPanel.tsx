@@ -149,6 +149,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
     },
     // Depend only on sdkType: App re-creates the status object on every
     // refresh, and the only field consumed here is status.sdkType.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [status?.sdkType],
   )
 
@@ -164,12 +165,16 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
       }
     },
     // Depend only on sdkType (see fetchVersions comment).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [status?.sdkType],
   )
 
   useEffect(() => {
     let stale = false
     if (status) {
+      // Intentional synchronous reset when switching SDK: clear the previous
+      // SDK's list/error/search state before the new fetch lands.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setVersions([])
       setLoadError(false)
       setSearchText('')
@@ -235,6 +240,9 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
   useEffect(() => {
     if (!status) return
     let stale = false
+    // Intentional synchronous reset when switching SDK (see fetchVersions
+    // effect).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setConflicts([])
     CheckSystemConflicts(status.sdkType)
       .then((entries) => {
@@ -416,7 +424,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
     if (!url || installProgress?.version !== version) {
       try {
         url = (await GetSdkDownloadURL(status.sdkType, version)) as string
-      } catch (e: any) {
+      } catch {
         msgApi.error(t('detail.copyUrlFail'))
         return
       }

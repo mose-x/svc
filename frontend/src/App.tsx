@@ -70,7 +70,7 @@ function App() {
         }
       })
       .catch((e) => console.error('Failed to load app info:', e))
-  }, [])
+  }, [i18n])
 
   useEffect(() => {
     // The inline boot screen in index.html covers the WebView's first paint;
@@ -97,6 +97,9 @@ function App() {
   }, [])
 
   useEffect(() => {
+    // Mount-time fetch: refreshStatuses resolves async; the finally setState
+    // only fires after the request settles, never during render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refreshStatuses().finally(() => setInitialLoading(false))
   }, [refreshStatuses])
 
