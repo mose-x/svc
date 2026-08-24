@@ -89,8 +89,10 @@ func TestBuildUnmanagedEntriesFiltersManagedSdks(t *testing.T) {
 	})
 }
 
-func TestBuildUnmanagedEntriesFlagsSystemDirs(t *testing.T) {
-	// Use a real protected dir for the host OS; create nothing inside it.
+func TestBuildUnmanagedEntriesSkipsSystemDirs(t *testing.T) {
+	// Use a real protected dir for the host OS. OS-managed copies can never
+	// be imported, so they must not appear in the PATH modal data at all
+	// (the SDK list/detail still reports them as system-managed).
 	var dir string
 	switch runtime.GOOS {
 	case "darwin", "linux":
@@ -98,18 +100,11 @@ func TestBuildUnmanagedEntriesFlagsSystemDirs(t *testing.T) {
 	case "windows":
 		dir = `C:\Windows\System32`
 	}
-	// /usr/bin (and System32) contain SDK binaries on every CI image, but
-	// even when detection finds none the protected flag must never be set on
-	// importable dirs, so assert the flag directly via IsProtectedSystemDir
-	// and only assert entry flags when SDK binaries were detected.
-	entries := buildUnmanagedEntries(dir, nil)
 	if !sdk.IsProtectedSystemDir(runtime.GOOS, dir) {
 		t.Fatalf("expected %q to be protected on %s", dir, runtime.GOOS)
 	}
-	for _, e := range entries {
-		if e.SdkType != "" && !e.SystemProtected {
-			t.Errorf("entry %+v from protected dir must be flagged systemProtected", e)
-		}
+	if entries := buildUnmanagedEntries(dir, nil); len(entries) != 0 {
+		t.Fatalf("entries = %+v; want protected dir fully skipped", entries)
 	}
 }
 

@@ -133,13 +133,16 @@ func buildUnmanagedEntries(p string, cfg *config.Config) []PathEntry {
 		// Central classification (protected OS dirs, external managers,
 		// hidden stubs) -- single source of truth in the sdk package.
 		cl := sdk.ClassifyPathCopy(sdk.SdkType(st), p)
-		if cl.Hidden {
+		// Hidden stubs (Windows Store python) and OS-protected dirs
+		// (/usr/bin, C:\Windows, ...) are skipped entirely: they can never
+		// be imported, so listing them is pure noise -- the SDK list/detail
+		// still reports them as "system-managed" where it matters.
+		if cl.Hidden || cl.SystemProtected {
 			continue
 		}
 		entries = append(entries, PathEntry{
 			Path:            p,
 			SdkType:         st,
-			SystemProtected: cl.SystemProtected,
 			ExternalManager: cl.ExternalManager,
 		})
 	}
