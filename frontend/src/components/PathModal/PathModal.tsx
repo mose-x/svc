@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Modal, Table, Tag, Button, App, Empty, Dropdown } from 'antd'
+import { useState, useEffect, useCallback } from 'react'
+import { Modal, Table, Tag, Button, App, Empty } from 'antd'
 import { ImportOutlined, FolderOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { GetPathEntries, ImportSdk } from '../../../wailsjs/go/main/App'
@@ -15,15 +15,6 @@ interface PathEntry {
   path: string
   isManaged: boolean
   sdkType: string
-  systemProtected: boolean
-  externalManager: string
-}
-
-// PathRow is one table row: all SDK entries sharing the same directory are
-// merged into a single row (union of sdkTypes) so /usr/bin etc. appear once.
-interface PathRow {
-  path: string
-  sdkTypes: string[]
   systemProtected: boolean
   externalManager: string
 }
@@ -46,7 +37,8 @@ const PathModal: React.FC<PathModalProps> = ({ open, onClose, onRefresh }) => {
     setLoading(true)
     try {
       const result = await GetPathEntries()
-      // Only show SDK paths not yet imported into SVC
+      // Only show SDK paths not yet imported into SVC. OS-protected dirs
+      // (/usr/bin, ...) are already excluded by the backend.
       const filtered = (result || []).filter((e) => e.sdkType && !e.isManaged)
       setEntries(filtered)
     } catch (e) {
@@ -55,33 +47,6 @@ const PathModal: React.FC<PathModalProps> = ({ open, onClose, onRefresh }) => {
       setLoading(false)
     }
   }, [])
-
-  // Merge entries that share the same directory into one row: /usr/bin
-  // provides python3 + ruby + perl + ... and must not produce N duplicate
-  // rows. Flags are combined (OR for systemProtected, first manager wins).
-  const rows = useMemo<PathRow[]>(() => {
-    const byPath = new Map<string, PathRow>()
-    for (const e of entries) {
-      let row = byPath.get(e.path)
-      if (!row) {
-        row = {
-          path: e.path,
-          sdkTypes: [],
-          systemProtected: false,
-          externalManager: '',
-        }
-        byPath.set(e.path, row)
-      }
-      if (!row.sdkTypes.includes(e.sdkType)) {
-        row.sdkTypes.push(e.sdkType)
-      }
-      row.systemProtected = row.systemProtected || e.systemProtected
-      if (!row.externalManager && e.externalManager) {
-        row.externalManager = e.externalManager
-      }
-    }
-    return Array.from(byPath.values())
-  }, [entries])
 
   useEffect(() => {
     if (open) {
@@ -92,19 +57,19 @@ const PathModal: React.FC<PathModalProps> = ({ open, onClose, onRefresh }) => {
     }
   }, [open, fetchEntries])
 
-  const handleImport = (path: string, sdkType: string) => {
-    if (!sdkType) return
-    const sdkName = sdkDisplayNames[sdkType] || sdkType
+  const handleImport = (entry: PathEntry) => {
+    if (!entry.sdkType) return
+    const sdkName = sdkDisplayNames[entry.sdkType] || entry.sdkType
     confirmAction({
       modal,
       title: t('path.importConfirm', { sdk: sdkName }),
-      content: t('path.importConfirmDesc', { path }),
+      content: t('path.importConfirmDesc', { path: entry.path }),
       okText: t('app.confirm'),
       cancelText: t('app.cancel'),
       run: async () => {
-        setImporting(path)
+        setImporting(entry.path + '|' + entry.sdkType)
         try {
-          await ImportSdk(path, sdkType)
+          await ImportSdk(entry.path, entry.sdkType)
           msgApi.success(t('path.importSuccess'))
           fetchEntries()
           onRefresh()
@@ -118,69 +83,20 @@ const PathModal: React.FC<PathModalProps> = ({ open, onClose, onRefresh }) => {
     })
   }
 
-  const renderAction = (row: PathRow) => {
-    if (row.externalManager) {
-      return (
-        <Tag>
-          {t('path.externallyManaged', {
-            manager: externalManagerName(row.externalManager),
-          })}
-        </Tag>
-      )
-    }
-    if (row.systemProtected) {
-      return <Tag>{t('app.systemManaged')}</Tag>
-    }
-    if (row.sdkTypes.length === 1) {
-      return (
-        <Button
-          size="small"
-          type="primary"
-          icon={<ImportOutlined />}
-          loading={importing === row.path}
-          onClick={() => handleImport(row.path, row.sdkTypes[0])}
-        >
-          {importing === row.path ? t('path.importing') : t('path.import')}
-        </Button>
-      )
-    }
-    // One directory provides several SDKs: let the user pick which to import.
-    return (
-      <Dropdown
-        trigger={['click']}
-        menu={{
-          items: row.sdkTypes.map((type) => ({
-            key: type,
-            icon: <ImportOutlined />,
-            label: `${t('path.import')} ${sdkDisplayNames[type] || type}`,
-          })),
-          onClick: ({ key }) => handleImport(row.path, key),
-        }}
-      >
-        <Button size="small" type="primary" loading={importing === row.path}>
-          {importing === row.path
-            ? t('path.importing')
-            : t('path.importChoose')}
-        </Button>
-      </Dropdown>
-    )
-  }
-
   const columns = [
     {
       title: t('path.sdkColumn'),
-      dataIndex: 'sdkTypes',
-      key: 'sdkTypes',
-      width: 160,
-      render: (types: string[]) => (
-        <>
-          {types.map((type) => (
-            <Tag key={type} color={sdkColors[type] || '#666'}>
-              {sdkDisplayNames[type] || type}
-            </Tag>
-          ))}
-        </>
-      ),
+      dataIndex: 'sdkType',
+      key: 'sdkType',
+      width: 120,
+      render: (type: string) =>
+        type ? (
+          <Tag color={sdkColors[type] || '#666'}>
+            {sdkDisplayNames[type] || type}
+          </Tag>
+        ) : (
+          <Tag>{t('path.noSdkDetected')}</Tag>
+        ),
     },
     {
       title: t('path.title'),
@@ -199,7 +115,30 @@ const PathModal: React.FC<PathModalProps> = ({ open, onClose, onRefresh }) => {
       key: 'status',
       width: 140,
       align: 'right' as const,
-      render: (_: unknown, row: PathRow) => renderAction(row),
+      render: (_: unknown, entry: PathEntry) =>
+        entry.externalManager ? (
+          <Tag>
+            {t('path.externallyManaged', {
+              manager: externalManagerName(entry.externalManager),
+            })}
+          </Tag>
+        ) : entry.systemProtected ? (
+          // Safety branch: the backend skips protected dirs, but never offer
+          // an import button if one ever slips through.
+          <Tag>{t('app.systemManaged')}</Tag>
+        ) : (
+          <Button
+            size="small"
+            type="primary"
+            icon={<ImportOutlined />}
+            loading={importing === entry.path + '|' + entry.sdkType}
+            onClick={() => handleImport(entry)}
+          >
+            {importing === entry.path + '|' + entry.sdkType
+              ? t('path.importing')
+              : t('path.import')}
+          </Button>
+        ),
     },
   ]
 
@@ -213,13 +152,13 @@ const PathModal: React.FC<PathModalProps> = ({ open, onClose, onRefresh }) => {
         footer={null}
         width={800}
       >
-        {rows.length === 0 && !loading ? (
+        {entries.length === 0 && !loading ? (
           <Empty description={t('path.emptyPath')} />
         ) : (
           <Table
-            dataSource={rows}
+            dataSource={entries}
             columns={columns}
-            rowKey={(r: PathRow) => r.path}
+            rowKey={(r: PathEntry) => `${r.path}|${r.sdkType}`}
             loading={loading}
             pagination={false}
             size="small"

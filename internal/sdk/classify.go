@@ -82,7 +82,7 @@ func IsProtectedSystemDir(goos, dir string) bool {
 	var prefixes []string
 	switch goos {
 	case "darwin":
-		prefixes = []string{"/usr/bin", "/bin", "/sbin", "/system", "/library/developer"}
+		prefixes = []string{"/usr/bin", "/usr/sbin", "/bin", "/sbin", "/system", "/library/developer"}
 	case "linux":
 		prefixes = []string{"/usr/bin", "/usr/sbin", "/bin", "/sbin", "/usr/lib", "/lib"}
 	case "windows":

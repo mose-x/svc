@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -119,10 +120,15 @@ func sliceContains(s []string, v string) bool {
 // filter a system copy (e.g. /usr/bin/python3) keeps appearing as importable
 // even though SVC already manages that SDK. OS-protected directories and
 // copies owned by external version managers are flagged so the UI can block
-// or re-label their import action. cfg may be nil in tests.
+// or re-label their import action. Protected dirs with NO recognizable SDK
+// binaries (e.g. C:\Windows\System32) are skipped too: the bare-entry
+// fallback must not leak OS dirs into the modal data. cfg may be nil in tests.
 func buildUnmanagedEntries(p string, cfg *config.Config) []PathEntry {
 	sdkTypes := detectSdkTypesByBin(p)
 	if len(sdkTypes) == 0 {
+		if sdk.IsProtectedSystemDir(runtime.GOOS, p) {
+			return nil
+		}
 		return []PathEntry{{Path: p}}
 	}
 	var entries []PathEntry
@@ -133,13 +139,16 @@ func buildUnmanagedEntries(p string, cfg *config.Config) []PathEntry {
 		// Central classification (protected OS dirs, external managers,
 		// hidden stubs) -- single source of truth in the sdk package.
 		cl := sdk.ClassifyPathCopy(sdk.SdkType(st), p)
-		if cl.Hidden {
+		// Hidden stubs (Windows Store python) and OS-protected dirs
+		// (/usr/bin, C:\Windows, ...) are skipped entirely: they can never
+		// be imported, so listing them is pure noise -- the SDK list/detail
+		// still reports them as "system-managed" where it matters.
+		if cl.Hidden || cl.SystemProtected {
 			continue
 		}
 		entries = append(entries, PathEntry{
 			Path:            p,
 			SdkType:         st,
-			SystemProtected: cl.SystemProtected,
 			ExternalManager: cl.ExternalManager,
 		})
 	}

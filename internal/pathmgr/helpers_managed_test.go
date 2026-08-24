@@ -89,8 +89,10 @@ func TestBuildUnmanagedEntriesFiltersManagedSdks(t *testing.T) {
 	})
 }
 
-func TestBuildUnmanagedEntriesFlagsSystemDirs(t *testing.T) {
-	// Use a real protected dir for the host OS; create nothing inside it.
+func TestBuildUnmanagedEntriesSkipsSystemDirs(t *testing.T) {
+	// Use a real protected dir for the host OS. OS-managed copies can never
+	// be imported, so they must not appear in the PATH modal data at all
+	// (the SDK list/detail still reports them as system-managed).
 	var dir string
 	switch runtime.GOOS {
 	case "darwin", "linux":
@@ -98,18 +100,34 @@ func TestBuildUnmanagedEntriesFlagsSystemDirs(t *testing.T) {
 	case "windows":
 		dir = `C:\Windows\System32`
 	}
-	// /usr/bin (and System32) contain SDK binaries on every CI image, but
-	// even when detection finds none the protected flag must never be set on
-	// importable dirs, so assert the flag directly via IsProtectedSystemDir
-	// and only assert entry flags when SDK binaries were detected.
-	entries := buildUnmanagedEntries(dir, nil)
 	if !sdk.IsProtectedSystemDir(runtime.GOOS, dir) {
 		t.Fatalf("expected %q to be protected on %s", dir, runtime.GOOS)
 	}
-	for _, e := range entries {
-		if e.SdkType != "" && !e.SystemProtected {
-			t.Errorf("entry %+v from protected dir must be flagged systemProtected", e)
-		}
+	if entries := buildUnmanagedEntries(dir, nil); len(entries) != 0 {
+		t.Fatalf("entries = %+v; want protected dir fully skipped", entries)
+	}
+}
+
+// TestBuildUnmanagedEntriesSkipsProtectedDirWithoutBins covers the bare-entry
+// branch: a protected dir that contains none of the characteristic SDK
+// binaries must still be skipped (Windows hit this with C:\Windows\System32,
+// where no SDK binary exists and the bare fallback leaked the dir).
+func TestBuildUnmanagedEntriesSkipsProtectedDirWithoutBins(t *testing.T) {
+	var dir string
+	switch runtime.GOOS {
+	case "darwin", "linux":
+		dir = "/usr/sbin"
+	case "windows":
+		dir = `C:\Windows\System32\drivers`
+	}
+	if !sdk.IsProtectedSystemDir(runtime.GOOS, dir) {
+		t.Fatalf("expected %q to be protected on %s", dir, runtime.GOOS)
+	}
+	if bins := detectSdkTypesByBin(dir); len(bins) != 0 {
+		t.Skipf("host dir %q unexpectedly provides SDK binaries %v; bare branch not exercised", dir, bins)
+	}
+	if entries := buildUnmanagedEntries(dir, nil); len(entries) != 0 {
+		t.Fatalf("entries = %+v; want protected dir without SDK bins fully skipped", entries)
 	}
 }
 
