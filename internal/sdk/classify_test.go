@@ -144,6 +144,7 @@ func TestIsProtectedSystemDir(t *testing.T) {
 	}{
 		// macOS
 		{"darwin /usr/bin", "darwin", "/usr/bin", true},
+		{"darwin /usr/sbin", "darwin", "/usr/sbin", true},
 		{"darwin /bin", "darwin", "/bin", true},
 		{"darwin /sbin", "darwin", "/sbin", true},
 		{"darwin system cryptex", "darwin", "/System/Cryptexes/App/usr/bin", true},

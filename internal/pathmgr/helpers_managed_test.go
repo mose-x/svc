@@ -108,6 +108,29 @@ func TestBuildUnmanagedEntriesSkipsSystemDirs(t *testing.T) {
 	}
 }
 
+// TestBuildUnmanagedEntriesSkipsProtectedDirWithoutBins covers the bare-entry
+// branch: a protected dir that contains none of the characteristic SDK
+// binaries must still be skipped (Windows hit this with C:\Windows\System32,
+// where no SDK binary exists and the bare fallback leaked the dir).
+func TestBuildUnmanagedEntriesSkipsProtectedDirWithoutBins(t *testing.T) {
+	var dir string
+	switch runtime.GOOS {
+	case "darwin", "linux":
+		dir = "/usr/sbin"
+	case "windows":
+		dir = `C:\Windows\System32\drivers`
+	}
+	if !sdk.IsProtectedSystemDir(runtime.GOOS, dir) {
+		t.Fatalf("expected %q to be protected on %s", dir, runtime.GOOS)
+	}
+	if bins := detectSdkTypesByBin(dir); len(bins) != 0 {
+		t.Skipf("host dir %q unexpectedly provides SDK binaries %v; bare branch not exercised", dir, bins)
+	}
+	if entries := buildUnmanagedEntries(dir, nil); len(entries) != 0 {
+		t.Fatalf("entries = %+v; want protected dir without SDK bins fully skipped", entries)
+	}
+}
+
 // TestBuildUnmanagedEntriesFlagsExternalManager verifies manager-owned node
 // dirs (nvm / nvm-rust) surface the ExternalManager flag via the central
 // sdk.ClassifyPathCopy classification.

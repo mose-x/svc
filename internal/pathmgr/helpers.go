@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -119,10 +120,15 @@ func sliceContains(s []string, v string) bool {
 // filter a system copy (e.g. /usr/bin/python3) keeps appearing as importable
 // even though SVC already manages that SDK. OS-protected directories and
 // copies owned by external version managers are flagged so the UI can block
-// or re-label their import action. cfg may be nil in tests.
+// or re-label their import action. Protected dirs with NO recognizable SDK
+// binaries (e.g. C:\Windows\System32) are skipped too: the bare-entry
+// fallback must not leak OS dirs into the modal data. cfg may be nil in tests.
 func buildUnmanagedEntries(p string, cfg *config.Config) []PathEntry {
 	sdkTypes := detectSdkTypesByBin(p)
 	if len(sdkTypes) == 0 {
+		if sdk.IsProtectedSystemDir(runtime.GOOS, p) {
+			return nil
+		}
 		return []PathEntry{{Path: p}}
 	}
 	var entries []PathEntry
