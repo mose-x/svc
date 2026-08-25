@@ -2,7 +2,6 @@ package pkgmgr
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"svc/internal/apperr"
 	"svc/internal/config"
 	"svc/internal/helpers"
 	"svc/internal/sdk"
@@ -128,12 +128,12 @@ func (s *Service) InstallPackageManager(name string) error {
 	switch name {
 	case "npm":
 		if s.cfg.GetActiveVersion("nodejs") == "" {
-			return fmt.Errorf("please install Node.js first")
+			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Node.js"})
 		}
-		return fmt.Errorf("npm is installed with Node.js, please install Node.js first")
+		return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Node.js"})
 	case "yarn":
 		if s.cfg.GetActiveVersion("nodejs") == "" {
-			return fmt.Errorf("please install Node.js first")
+			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Node.js"})
 		}
 		if nodeSupportsCorepack(s.cfg.GetActiveVersion("nodejs")) {
 			if err := s.runScopedCommand("corepack", sdk.NodeJS, "enable"); err != nil {
@@ -144,7 +144,7 @@ func (s *Service) InstallPackageManager(name string) error {
 		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "yarn")
 	case "pnpm":
 		if s.cfg.GetActiveVersion("nodejs") == "" {
-			return fmt.Errorf("please install Node.js first")
+			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Node.js"})
 		}
 		if nodeSupportsCorepack(s.cfg.GetActiveVersion("nodejs")) {
 			if err := s.runScopedCommand("corepack", sdk.NodeJS, "enable"); err != nil {
@@ -155,16 +155,16 @@ func (s *Service) InstallPackageManager(name string) error {
 		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "pnpm")
 	case "composer":
 		if s.cfg.GetActiveVersion("php") == "" {
-			return fmt.Errorf("please install PHP first")
+			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "PHP"})
 		}
-		return fmt.Errorf("Composer requires manual download: https://getcomposer.org/download/")
+		return apperr.New(apperr.ComposerManual, map[string]string{"url": "https://getcomposer.org/download/"})
 	case "pip":
 		if s.cfg.GetActiveVersion("python") == "" {
-			return fmt.Errorf("please install Python first")
+			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Python"})
 		}
-		return fmt.Errorf("pip is installed with Python, please install Python first")
+		return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Python"})
 	default:
-		return fmt.Errorf("unknown package manager: %s", name)
+		return apperr.New(apperr.UnknownPackageManager, map[string]string{"name": name})
 	}
 }
 
@@ -187,7 +187,7 @@ func (s *Service) UpdatePackageManager(name string) error {
 	case "pip":
 		return s.runScopedCommand("python", sdk.Python, "-m", "pip", "install", "--upgrade", "pip")
 	default:
-		return fmt.Errorf("unknown package manager: %s", name)
+		return apperr.New(apperr.UnknownPackageManager, map[string]string{"name": name})
 	}
 }
 

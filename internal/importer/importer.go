@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"svc/internal/apperr"
 	"svc/internal/config"
 	"svc/internal/extractor"
 	"svc/internal/helpers"
@@ -35,7 +36,7 @@ func New(cfg *config.Config, registry *sdk.Registry, pathMgr pathmgr.PathManager
 
 func (s *Service) SelectLocalFile() (string, error) {
 	if s.rt == nil {
-		return "", fmt.Errorf("app not initialized")
+		return "", apperr.New(apperr.AppNotInitialized, nil)
 	}
 	return s.rt.OpenFileDialog("Select Archive File", []wailsrt.FileFilter{
 		{DisplayName: "Archive", Pattern: "*.zip;*.tar.gz;*.tgz;*.tar.xz;*.7z"},
@@ -45,14 +46,14 @@ func (s *Service) SelectLocalFile() (string, error) {
 
 func (s *Service) SelectLocalDir() (string, error) {
 	if s.rt == nil {
-		return "", fmt.Errorf("app not initialized")
+		return "", apperr.New(apperr.AppNotInitialized, nil)
 	}
 	return s.rt.OpenDirectoryDialog("Select SDK Directory")
 }
 
 func (s *Service) ImportLocalSdk(sdkTypeStr string, localPath string) error {
 	if s.registry == nil {
-		return fmt.Errorf("application not fully initialized")
+		return apperr.New(apperr.AppNotInitialized, nil)
 	}
 	if err := helpers.ValidatePathSegment(sdkTypeStr); err != nil {
 		return err
@@ -60,7 +61,7 @@ func (s *Service) ImportLocalSdk(sdkTypeStr string, localPath string) error {
 	sdkType := sdk.SdkType(sdkTypeStr)
 	f := s.registry.Get(sdkType)
 	if f == nil {
-		return fmt.Errorf("unknown SDK type: %s", sdkTypeStr)
+		return apperr.New(apperr.UnknownSdkType, map[string]string{"sdk": sdkTypeStr})
 	}
 
 	logger.Info("Importing local SDK: %s from %s", sdkTypeStr, localPath)
@@ -68,7 +69,7 @@ func (s *Service) ImportLocalSdk(sdkTypeStr string, localPath string) error {
 	info, err := os.Stat(localPath)
 	if err != nil {
 		logger.Error("Path does not exist: %s", localPath)
-		return fmt.Errorf("path does not exist: %s", localPath)
+		return apperr.New(apperr.PathNotExist, map[string]string{"path": localPath})
 	}
 
 	if err := rejectUnimportableSource(sdkType, localPath, info.IsDir()); err != nil {
@@ -111,7 +112,9 @@ func (s *Service) ImportLocalSdk(sdkTypeStr string, localPath string) error {
 	// Layer 1: Pre-check — run the verify binary to confirm it's usable.
 	versionName, err := s.detectVersionFromDir(sourceDir, f)
 	if err != nil {
-		return fmt.Errorf("SDK binary verification failed, cannot import: %w", err)
+		// The leaf error carries the user-facing reason (missing binary,
+		// timeout, unparseable output) — pass it through unwrapped.
+		return err
 	}
 
 	// Layer 2 (critical files) runs INSIDE copyToTargetAtomically, AFTER the
@@ -145,14 +148,14 @@ func (s *Service) ImportLocalSdk(sdkTypeStr string, localPath string) error {
 
 func (s *Service) ImportSdk(externalPath string, sdkType string) error {
 	if s.registry == nil {
-		return fmt.Errorf("application not fully initialized")
+		return apperr.New(apperr.AppNotInitialized, nil)
 	}
 	if err := helpers.ValidatePathSegment(sdkType); err != nil {
 		return err
 	}
 	f := s.registry.Get(sdk.SdkType(sdkType))
 	if f == nil {
-		return fmt.Errorf("unknown SDK type: %s", sdkType)
+		return apperr.New(apperr.UnknownSdkType, map[string]string{"sdk": sdkType})
 	}
 	logger.Info("Importing SDK: %s from %s", sdkType, externalPath)
 	if err := rejectUnimportableSource(sdk.SdkType(sdkType), externalPath, true); err != nil {
@@ -163,7 +166,8 @@ func (s *Service) ImportSdk(externalPath string, sdkType string) error {
 	// Layer 1: Pre-check — run the verify binary to confirm it's usable.
 	versionName, err := s.detectVersionFromDir(sdkRoot, f)
 	if err != nil {
-		return fmt.Errorf("SDK binary verification failed, cannot import: %w", err)
+		// Leaf error carries the user-facing reason — pass through unwrapped.
+		return err
 	}
 
 	// Layer 2 (critical files) runs INSIDE copyToTargetAtomically, AFTER the
@@ -197,7 +201,7 @@ func (s *Service) ImportSdk(externalPath string, sdkType string) error {
 
 func (s *Service) ImportPathSdk(sdkTypeStr string) error {
 	if s.registry == nil {
-		return fmt.Errorf("application not fully initialized")
+		return apperr.New(apperr.AppNotInitialized, nil)
 	}
 	if err := helpers.ValidatePathSegment(sdkTypeStr); err != nil {
 		return err
@@ -206,13 +210,13 @@ func (s *Service) ImportPathSdk(sdkTypeStr string) error {
 	sdkType := sdk.SdkType(sdkTypeStr)
 	f := s.registry.Get(sdkType)
 	if f == nil {
-		return fmt.Errorf("unknown SDK type: %s", sdkTypeStr)
+		return apperr.New(apperr.UnknownSdkType, map[string]string{"sdk": sdkTypeStr})
 	}
 
 	cmdName, _ := f.VerifyCommand()
 	binPath := sdk.ResolveSystemCommand(cmdName)
 	if binPath == "" {
-		return fmt.Errorf("%s not found in system PATH", cmdName)
+		return apperr.New(apperr.NotInPath, map[string]string{"cmd": cmdName})
 	}
 
 	// Central classification backstop (single source of truth in
@@ -222,15 +226,15 @@ func (s *Service) ImportPathSdk(sdkTypeStr string) error {
 	// direct API calls and races where status predated the classification.
 	cl := sdk.ClassifyPathCopy(sdkType, binPath)
 	if cl.Hidden {
-		return fmt.Errorf("%s at %s cannot be detected or imported", cmdName, binPath)
+		return apperr.New(apperr.HiddenCopy, map[string]string{"cmd": cmdName, "path": binPath})
 	}
 	if cl.ExternalManager != "" {
-		return fmt.Errorf("%s is managed by %s; please keep using %s to maintain it instead of importing into SVC",
-			cmdName, cl.ExternalManager, cl.ExternalManager)
+		return apperr.New(apperr.ManagedCopy, map[string]string{"cmd": cmdName, "manager": cl.ExternalManager})
 	}
 	if cl.SystemProtected {
-		return fmt.Errorf("system %s is at %s (a protected OS path) and cannot be imported; please install %s via the app instead, the app-managed copy will take precedence via PATH priority",
-			cmdName, binPath, f.Type())
+		return apperr.New(apperr.ProtectedImport, map[string]string{
+			"cmd": cmdName, "path": binPath, "sdk": string(f.Type()),
+		})
 	}
 
 	binDir := filepath.Dir(binPath)
@@ -239,7 +243,8 @@ func (s *Service) ImportPathSdk(sdkTypeStr string) error {
 	// Layer 1: Pre-check — run the verify binary to confirm it's usable.
 	versionName, err := s.detectVersionFromDir(sdkRoot, f)
 	if err != nil {
-		return fmt.Errorf("SDK binary verification failed, cannot import: %w", err)
+		// Leaf error carries the user-facing reason — pass through unwrapped.
+		return err
 	}
 
 	// Layer 2 (critical files) runs INSIDE copyToTargetAtomically, AFTER the
@@ -284,10 +289,10 @@ func rejectUnimportableSource(sdkType sdk.SdkType, p string, isDir bool) error {
 	}
 	cl := sdk.ClassifyPathCopy(sdkType, p)
 	if cl.SystemProtected {
-		return fmt.Errorf("%s is a protected system directory and cannot be imported; please install the SDK via the app instead", p)
+		return apperr.New(apperr.ProtectedDir, map[string]string{"path": p})
 	}
 	if cl.ExternalManager != "" {
-		return fmt.Errorf("this copy is managed by %s; please keep using %s to maintain it instead of importing into SVC", cl.ExternalManager, cl.ExternalManager)
+		return apperr.New(apperr.ManagedDir, map[string]string{"manager": cl.ExternalManager})
 	}
 	return nil
 }

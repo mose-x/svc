@@ -11,9 +11,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
+	"svc/internal/apperr"
 	"svc/internal/config"
 	"svc/internal/downloader"
 	"svc/internal/logger"
@@ -258,7 +260,7 @@ func (u *Updater) CheckUpdate() (UpdateInfo, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return UpdateInfo{}, fmt.Errorf("update server returned status %d (may be rate-limited or the release is unavailable)", resp.StatusCode)
+		return UpdateInfo{}, apperr.New(apperr.UpdateHttpStatus, map[string]string{"status": strconv.Itoa(resp.StatusCode)})
 	}
 
 	var releases []githubRelease
@@ -298,7 +300,9 @@ func (u *Updater) CheckUpdate() (UpdateInfo, error) {
 	// NOT the same as "up to date". Reporting HasUpdate=false here would
 	// mislead the user into thinking they are current when they are not.
 	if !ok {
-		return UpdateInfo{}, fmt.Errorf("new version v%s is available but no download asset matches your platform (%s/%s); please download it manually from the release page", remoteVersion, runtime.GOOS, runtime.GOARCH)
+		return UpdateInfo{}, apperr.New(apperr.NoAsset, map[string]string{
+			"version": remoteVersion, "os": runtime.GOOS, "arch": runtime.GOARCH,
+		})
 	}
 
 	// Resolve the expected sha256 from sha256sums.txt (also a release asset).
@@ -472,7 +476,7 @@ func (u *Updater) DownloadUpdate(downloadURL, expectedSha256 string) error {
 		}
 		if !sha256Matches(actual, expectedSha256) {
 			os.Remove(tmpPath)
-			return fmt.Errorf("integrity check failed: expected %s, got %s", expectedSha256, actual)
+			return apperr.New(apperr.ChecksumMismatch, map[string]string{"expected": expectedSha256, "got": actual})
 		}
 	}
 

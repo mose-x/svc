@@ -2,12 +2,12 @@ package importer
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"svc/internal/apperr"
 	"svc/internal/helpers"
 	"svc/internal/sdk"
 )
@@ -49,7 +49,7 @@ func (s *Service) detectVersionFromDir(sdkRoot string, f sdk.VersionFetcher) (st
 		binPath = helpers.FindExecutable(binDir, cmdName)
 	}
 	if binPath == "" {
-		return "", fmt.Errorf("%s executable not found in directory", cmdName)
+		return "", apperr.New(apperr.ExecNotFound, map[string]string{"cmd": cmdName})
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -67,7 +67,7 @@ func (s *Service) detectVersionFromDir(sdkRoot string, f sdk.VersionFetcher) (st
 	if sdkType == "maven" || sdkType == "gradle" {
 		javaHome := s.findJavaHome()
 		if javaHome == "" {
-			return "", fmt.Errorf("importing %s requires JDK to be installed first, please import or install JDK first", sdkType)
+			return "", apperr.New(apperr.JdkRequired, map[string]string{"sdk": sdkType})
 		}
 		env = append(env, "JAVA_HOME="+javaHome)
 	}
@@ -83,14 +83,14 @@ func (s *Service) detectVersionFromDir(sdkRoot string, f sdk.VersionFetcher) (st
 	out, err := c.CombinedOutput()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("executing %s timed out (10s), unable to get version", cmdName)
+			return "", apperr.New(apperr.ExecTimeout, map[string]string{"cmd": cmdName})
 		}
-		return "", fmt.Errorf("failed to execute %s: %s", cmdName, strings.TrimSpace(string(out)))
+		return "", apperr.New(apperr.ExecFailed, map[string]string{"cmd": cmdName, "detail": strings.TrimSpace(string(out))})
 	}
 
 	ver := helpers.ExtractVersionFromString(string(out))
 	if ver == "" {
-		return "", fmt.Errorf("unable to parse version from %s output", cmdName)
+		return "", apperr.New(apperr.VersionParseFail, map[string]string{"cmd": cmdName})
 	}
 	return ver, nil
 }
@@ -127,10 +127,11 @@ func (s *Service) postImportVerifier(f sdk.VersionFetcher, versionName string) f
 	return func(dir string) error {
 		postVer, err := s.detectVersionFromDir(dir, f)
 		if err != nil {
-			return fmt.Errorf("post-import verification failed: %w", err)
+			// Leaf error carries the user-facing reason — pass through unwrapped.
+			return err
 		}
 		if postVer != versionName {
-			return fmt.Errorf("post-import version mismatch: expected %s, got %s", versionName, postVer)
+			return apperr.New(apperr.VersionMismatch, map[string]string{"expected": versionName, "got": postVer})
 		}
 		return nil
 	}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"svc/internal/apperr"
 	"svc/internal/fsutil"
 	"svc/internal/logger"
 	"svc/internal/pathmgr"
@@ -173,7 +174,7 @@ func criticalFilesFor(t sdk.SdkType) []string {
 func checkCriticalFiles(sdkRoot string, t sdk.SdkType) error {
 	for _, file := range criticalFilesFor(t) {
 		if _, err := os.Stat(filepath.Join(sdkRoot, file)); err != nil {
-			return fmt.Errorf("SDK incomplete, missing %s", file)
+			return apperr.New(apperr.SdkIncomplete, map[string]string{"missing": file})
 		}
 	}
 	return nil

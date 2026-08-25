@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"svc/internal/apperr"
 	"svc/internal/helpers"
 )
 
@@ -255,7 +256,7 @@ func (u *Updater) RollbackUpdate() error {
 	}
 	bak := findBackupPath(currentExe)
 	if _, err := os.Stat(bak); err != nil {
-		return fmt.Errorf("no backup found at %s: %w", bak, err)
+		return apperr.New(apperr.NoBackup, map[string]string{"path": bak})
 	}
 
 	pid := os.Getpid()

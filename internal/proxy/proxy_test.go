@@ -143,8 +143,8 @@ func TestCheckProxy_RedirectRevalidated(t *testing.T) {
 		resp.Body.Close()
 		t.Fatal("expected redirect to loopback address to be blocked")
 	}
-	if !strings.Contains(err.Error(), "not allowed") {
-		t.Errorf("error should mention the blocked address, got: %v", err)
+	if !strings.Contains(err.Error(), "[svc:private-ip]") {
+		t.Errorf("error should carry the private-ip marker, got: %v", err)
 	}
 
 	// Redirect to another public URL must still work.

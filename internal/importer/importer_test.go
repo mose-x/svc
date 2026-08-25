@@ -187,8 +187,8 @@ func TestCopyToTargetAtomically_RejectsIncompleteAfterAlignment(t *testing.T) {
 	if err == nil {
 		t.Fatal("copyToTargetAtomically should reject an incomplete SDK")
 	}
-	if !strings.Contains(err.Error(), "SDK incomplete") {
-		t.Errorf("error = %v; want an 'SDK incomplete' message", err)
+	if !strings.Contains(err.Error(), "[svc:sdk-incomplete]") {
+		t.Errorf("error = %v; want the sdk-incomplete marker", err)
 	}
 	for _, p := range []string{target, target + ".new", target + ".old"} {
 		if _, statErr := os.Stat(p); !os.IsNotExist(statErr) {
@@ -311,4 +311,20 @@ func TestRejectUnimportableSource(t *testing.T) {
 			t.Errorf("rejectUnimportableSource(nvm) = %v; want an error naming nvm", err)
 		}
 	})
+}
+
+// TestImportEntryPointsUninitializedCoded verifies the import entry points
+// return the machine-readable app-not-initialized marker (translated by the
+// frontend) instead of raw English when the service is not wired up.
+func TestImportEntryPointsUninitializedCoded(t *testing.T) {
+	s := &Service{}
+	for name, err := range map[string]error{
+		"ImportPathSdk":  s.ImportPathSdk("jdk"),
+		"ImportSdk":      s.ImportSdk("/tmp/whatever", "jdk"),
+		"ImportLocalSdk": s.ImportLocalSdk("jdk", "/tmp/whatever"),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "[svc:app-not-initialized]") {
+			t.Errorf("%s = %v; want the app-not-initialized marker", name, err)
+		}
+	}
 }
