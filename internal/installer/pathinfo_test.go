@@ -2,6 +2,8 @@ package installer
 
 import (
 	"net/http"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"svc/internal/sdk"
@@ -64,4 +66,54 @@ func TestCompletePathInfoIgnoresNonPathStatus(t *testing.T) {
 	}
 	// nil status must not panic.
 	completePathInfo(nil, stubFetcher{})
+}
+
+// TestCompletePathInfoClassifiesProtected verifies the central
+// classification backstop: a PATH copy inside an OS-protected dir must set
+// SystemProtected for ANY SDK type (previously only python/nodejs fetchers
+// classified, so e.g. JDK at /usr/bin/java leaked the import entry).
+func TestCompletePathInfoClassifiesProtected(t *testing.T) {
+	var bin string
+	switch runtime.GOOS {
+	case "windows":
+		bin = `C:\Windows\System32\javac.exe`
+	default:
+		bin = "/usr/bin/javac"
+	}
+	status := &sdk.SdkStatus{PathConfigured: true, PathBinary: bin}
+	completePathInfo(status, stubFetcher{})
+	if !status.SystemProtected {
+		t.Errorf("SystemProtected = false for %q; want true", bin)
+	}
+	if status.SystemPath != bin {
+		t.Errorf("SystemPath = %q; want %q", status.SystemPath, bin)
+	}
+	if status.ExternalManager != "" {
+		t.Errorf("ExternalManager = %q; want empty for a protected copy", status.ExternalManager)
+	}
+}
+
+// TestCompletePathInfoClassifiesExternalManager verifies manager-owned node
+// copies surface ExternalManager through the same central classification.
+func TestCompletePathInfoClassifiesExternalManager(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), ".nvm.rust", "shims", "node")
+	status := &sdk.SdkStatus{PathConfigured: true, PathBinary: bin}
+	completePathInfo(status, stubFetcher{})
+	if status.ExternalManager != "nvm-rust" {
+		t.Errorf("ExternalManager = %q; want nvm-rust", status.ExternalManager)
+	}
+	if status.SystemProtected {
+		t.Error("SystemProtected = true; want false for a manager-owned copy")
+	}
+}
+
+// TestCompletePathInfoPlainCopyUnflagged verifies a standalone importable
+// copy gets neither flag.
+func TestCompletePathInfoPlainCopyUnflagged(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "jdk", "bin", "javac")
+	status := &sdk.SdkStatus{PathConfigured: true, PathBinary: bin}
+	completePathInfo(status, stubFetcher{})
+	if status.SystemProtected || status.ExternalManager != "" {
+		t.Errorf("plain copy flagged: protected=%v manager=%q", status.SystemProtected, status.ExternalManager)
+	}
 }

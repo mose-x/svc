@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"svc/internal/apperr"
 	"svc/internal/config"
 	"svc/internal/fsutil"
 	"svc/internal/logger"
@@ -59,7 +60,7 @@ func validateMigrationPaths(oldDir, newDir string) error {
 	newDir = filepath.Clean(newDir)
 
 	if _, err := os.Stat(newDir); err == nil {
-		return fmt.Errorf("target already exists: %s", newDir)
+		return apperr.New(apperr.TargetExists, map[string]string{"path": newDir})
 	}
 
 	// Ancestor check. Windows paths are case-insensitive, so compare
@@ -71,10 +72,10 @@ func validateMigrationPaths(oldDir, newDir string) error {
 	}
 	sep := string(filepath.Separator)
 	if newCmp == oldCmp || strings.HasPrefix(newCmp, oldCmp+sep) {
-		return fmt.Errorf("target is nested inside source directory: %s", newDir)
+		return apperr.New(apperr.NestedDirs, map[string]string{"path": newDir})
 	}
 	if strings.HasPrefix(oldCmp, newCmp+sep) {
-		return fmt.Errorf("source is nested inside target directory: %s", newDir)
+		return apperr.New(apperr.NestedDirs, map[string]string{"path": newDir})
 	}
 	return nil
 }
@@ -93,10 +94,10 @@ func (m *Manager) MigrateInstallPath(newPath string) error {
 
 	// N2: Reject system directories and relative paths.
 	if !filepath.IsAbs(newDir) {
-		return fmt.Errorf("install path must be absolute: %s", newDir)
+		return apperr.New(apperr.PathNotAbsolute, map[string]string{"path": newDir})
 	}
 	if isSystemPath(newDir) {
-		return fmt.Errorf("cannot migrate to system directory: %s", newDir)
+		return apperr.New(apperr.SystemDir, map[string]string{"path": newDir})
 	}
 
 	logger.Info("Starting install path migration: %s -> %s", oldDir, newDir)

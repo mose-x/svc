@@ -58,8 +58,8 @@ func TestPostImportVerifier(t *testing.T) {
 
 	t.Run("mismatched version rejected", func(t *testing.T) {
 		err := s.postImportVerifier(fakeVersionFetcher{}, "1.0.0")(sdkRoot)
-		if err == nil || !strings.Contains(err.Error(), "version mismatch") {
-			t.Errorf("verifier = %v; want a version-mismatch error", err)
+		if err == nil || !strings.Contains(err.Error(), "[svc:version-mismatch]") {
+			t.Errorf("verifier = %v; want the version-mismatch marker", err)
 		}
 	})
 }
@@ -67,7 +67,8 @@ func TestPostImportVerifier(t *testing.T) {
 func TestPostImportVerifierMissingExecutable(t *testing.T) {
 	s := &Service{}
 	err := s.postImportVerifier(fakeVersionFetcher{}, "1.0.0")(t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "post-import verification failed") {
-		t.Errorf("verifier = %v; want a post-import verification failure", err)
+	// The leaf reason (missing executable) now surfaces unwrapped.
+	if err == nil || !strings.Contains(err.Error(), "[svc:exec-not-found]") {
+		t.Errorf("verifier = %v; want the exec-not-found marker", err)
 	}
 }

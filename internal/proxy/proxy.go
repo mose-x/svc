@@ -9,9 +9,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
+	"svc/internal/apperr"
 	"svc/internal/config"
 	"svc/internal/downloader"
 	"svc/internal/logger"
@@ -62,7 +64,7 @@ func (s *Service) CheckProxy(targetURL string) error {
 	resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		return apperr.New(apperr.HttpStatus, map[string]string{"status": strconv.Itoa(resp.StatusCode)})
 	}
 	return nil
 }
@@ -87,7 +89,7 @@ func validateCheckURL(rawURL string) error {
 		return fmt.Errorf("invalid URL: %w", err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("only http/https URLs are allowed, got scheme: %s", u.Scheme)
+		return apperr.New(apperr.SchemeNotAllowed, map[string]string{"scheme": u.Scheme})
 	}
 	host := u.Hostname()
 	// Fast path: common loopback/private hosts by string match.
@@ -102,7 +104,7 @@ func validateCheckURL(rawURL string) error {
 		strings.HasPrefix(host, "172.27.") || strings.HasPrefix(host, "172.28.") ||
 		strings.HasPrefix(host, "172.29.") || strings.HasPrefix(host, "172.30.") ||
 		strings.HasPrefix(host, "172.31.") {
-		return fmt.Errorf("loopback/private IP addresses are not allowed: %s", host)
+		return apperr.New(apperr.PrivateIp, map[string]string{"host": host})
 	}
 	// Thorough check for IP literals: covers ranges the string blacklist
 	// misses (0.0.0.0, 169.254.0.0/16, IPv6 fc00::/7 and fe80::/10,
@@ -110,7 +112,7 @@ func validateCheckURL(rawURL string) error {
 	// and are allowed here.
 	if ip := net.ParseIP(host); ip != nil {
 		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
-			return fmt.Errorf("loopback/private IP addresses are not allowed: %s", host)
+			return apperr.New(apperr.PrivateIp, map[string]string{"host": host})
 		}
 	}
 	return nil

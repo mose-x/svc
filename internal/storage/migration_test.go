@@ -40,12 +40,12 @@ func TestValidateMigrationPaths(t *testing.T) {
 		wantErr string // substring expected in the error; empty means success
 	}{
 		{"normal nonexistent target ok", oldDir, filepath.Join(base, "new-target"), ""},
-		{"existing directory rejected", oldDir, existingDir, "already exists"},
-		{"existing plain file rejected", oldDir, existingFile, "already exists"},
-		{"target nested in source rejected", oldDir, filepath.Join(oldDir, "nested"), "nested"},
-		{"target deep-nested in source rejected", oldDir, filepath.Join(oldDir, "sub", "deep"), "nested"},
-		{"same path rejected", filepath.Join(base, "old2"), filepath.Join(base, "old2"), "nested"},
-		{"source nested in target rejected", filepath.Join(ghostOuter, "inner"), ghostOuter, "nested"},
+		{"existing directory rejected", oldDir, existingDir, "[svc:target-exists]"},
+		{"existing plain file rejected", oldDir, existingFile, "[svc:target-exists]"},
+		{"target nested in source rejected", oldDir, filepath.Join(oldDir, "nested"), "[svc:nested-dirs]"},
+		{"target deep-nested in source rejected", oldDir, filepath.Join(oldDir, "sub", "deep"), "[svc:nested-dirs]"},
+		{"same path rejected", filepath.Join(base, "old2"), filepath.Join(base, "old2"), "[svc:nested-dirs]"},
+		{"source nested in target rejected", filepath.Join(ghostOuter, "inner"), ghostOuter, "[svc:nested-dirs]"},
 		{"sibling with shared prefix ok", oldDir, filepath.Join(base, "old2"), ""},
 	}
 
@@ -91,7 +91,7 @@ func TestMigrateInstallPath_RejectsExistingFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when migrating onto an existing file, got nil")
 	}
-	if !strings.Contains(err.Error(), "already exists") {
+	if !strings.Contains(err.Error(), "[svc:target-exists]") {
 		t.Errorf("unexpected error: %v", err)
 	}
 	// The pre-existing user file must be untouched.
