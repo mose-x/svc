@@ -26,9 +26,22 @@ var defaultGithubMirrors = []string{
 	"https://mirror.ghproxy.com",
 }
 
-// mirrorsFile is the JSON shape of mirrors.json.
+// mirrorsFile is the JSON shape of mirrors.json. The list key is read under
+// BOTH spellings: current builds seed/read "github_mirrors" (snake_case), but
+// early releases documented/wrote the camelCase "githubMirrors" form, and user
+// files from that era must keep working instead of being silently ignored.
+// When both keys are present, snake_case wins.
 type mirrorsFile struct {
-	GithubMirrors []string `json:"github_mirrors"`
+	GithubMirrors      []string `json:"github_mirrors"`
+	GithubMirrorsCamel []string `json:"githubMirrors"`
+}
+
+// list returns the effective mirror list from either accepted key spelling.
+func (m mirrorsFile) list() []string {
+	if m.GithubMirrors != nil {
+		return m.GithubMirrors
+	}
+	return m.GithubMirrorsCamel
 }
 
 // mirrorStore holds the in-memory copy of the mirror list and the path to the
@@ -85,9 +98,11 @@ func GetGithubMirrors() []string {
 	data, err := os.ReadFile(globalMirrors.path)
 	if err == nil {
 		var mf mirrorsFile
-		if jsonErr := json.Unmarshal(data, &mf); jsonErr == nil && mf.GithubMirrors != nil {
-			globalMirrors.cached = mf.GithubMirrors
-			return append([]string(nil), mf.GithubMirrors...)
+		if jsonErr := json.Unmarshal(data, &mf); jsonErr == nil {
+			if list := mf.list(); list != nil {
+				globalMirrors.cached = list
+				return append([]string(nil), list...)
+			}
 		}
 	}
 	// Read or parse failed: use the last good list, or defaults if none.
