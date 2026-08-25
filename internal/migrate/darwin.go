@@ -3,6 +3,7 @@
 package migrate
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -171,6 +172,9 @@ func launchLegacyRenameMigration(currentExe string) error {
 // svc.app, isLegacyDarwinInstall is false and this is a no-op.
 func MaybeShowLegacyMigrationPrompt(ctx context.Context, rt wailsrt.Runtime) {
 	if !isLegacyDarwinInstall() {
+		// Fresh svc.app: remove a leftover old-named bundle sitting next to
+		// it (user installed the new DMG without removing the old app).
+		removeLegacySiblingBundle()
 		return
 	}
 	exe, err := os.Executable()
@@ -184,6 +188,64 @@ func MaybeShowLegacyMigrationPrompt(ctx context.Context, rt wailsrt.Runtime) {
 	}
 	// The script waits for this process to exit before touching anything.
 	rt.Quit()
+}
+
+// legacySiblingBundlePath returns the path of the old-named bundle that would
+// sit next to the bundle containing exePath, or "" when no removal should be
+// attempted: exePath is not inside a real .app bundle (dev/CLI builds), or it
+// IS the legacy bundle itself (the rename migration owns that case). Pure so
+// tests cover every branch on any host.
+func legacySiblingBundlePath(exePath string) string {
+	bundle := filepath.Dir(filepath.Dir(filepath.Dir(exePath)))
+	if !strings.HasSuffix(strings.ToLower(bundle), ".app") {
+		return ""
+	}
+	if strings.EqualFold(filepath.Base(bundle), legacyAppBundleName) {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(bundle), legacyAppBundleName)
+}
+
+// removeLegacySiblingBundle deletes the pre-rename bundle when a fresh
+// svc.app was installed alongside it (two apps in /Applications otherwise).
+// Silent and idempotent: a missing sibling is a no-op, a RUNNING legacy app
+// is skipped (retry on next launch) rather than deleted out from under the
+// user, and permission failures are only logged.
+func removeLegacySiblingBundle() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	removeLegacySiblingBundleFor(exe)
+}
+
+func removeLegacySiblingBundleFor(exePath string) {
+	sibling := legacySiblingBundlePath(exePath)
+	if sibling == "" {
+		return
+	}
+	if _, err := os.Stat(sibling); err != nil {
+		return // nothing left to remove
+	}
+	if legacyBundleRunning(sibling) {
+		logger.Info("Legacy bundle %s is still running; skipping removal this launch", sibling)
+		return
+	}
+	if err := os.RemoveAll(sibling); err != nil {
+		logger.Warn("Failed to remove legacy bundle %s (remove it manually): %v", sibling, err)
+		return
+	}
+	logger.Info("Removed legacy bundle %s (replaced by the current app)", sibling)
+}
+
+// legacyBundleRunning reports whether the legacy bundle is currently running.
+// pgrep -f matches the bundle path anywhere on a process command line; exit
+// status 1 (no match) or a missing pgrep both mean "not running" — erring
+// toward removal is safe because deleting a bundle the user actively runs is
+// the only harmful case.
+func legacyBundleRunning(bundlePath string) bool {
+	out, err := exec.Command("pgrep", "-f", bundlePath).Output()
+	return err == nil && len(bytes.TrimSpace(out)) > 0
 }
 
 // RepairShortcutIcons is a no-op on macOS: there are no .lnk shortcuts to

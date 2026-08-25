@@ -57,6 +57,7 @@ VIAddVersionKey "ProductName"     "${INFO_PRODUCTNAME}"
 ManifestDPIAware true
 
 !include "MUI.nsh"
+!include "FileFunc.nsh" # ${GetParent}: derive the legacy install dir from UninstallString
 
 !define MUI_ICON "..\icon-white.ico"
 !define MUI_UNICON "..\icon-white.ico"
@@ -165,13 +166,38 @@ Section
     Delete "$SMPROGRAMS\${LEGACY_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${LEGACY_PRODUCTNAME}.lnk"
     RMDir /r "$AppData\${LEGACY_EXECUTABLE}"
+    # Locate the legacy install directory: InstallLocation under HKLM
+    # (all-users install) first, then HKCU (per-user install). Installers
+    # predating the InstallLocation write are recovered from the
+    # UninstallString path so no legacy install variant is left behind.
     ReadRegStr $1 HKLM "${LEGACY_UNINST_KEY}" "InstallLocation"
+    ${If} $1 == ""
+        ReadRegStr $1 HKCU "${LEGACY_UNINST_KEY}" "InstallLocation"
+    ${EndIf}
+    ${If} $1 == ""
+        ReadRegStr $2 HKLM "${LEGACY_UNINST_KEY}" "UninstallString"
+        ${If} $2 == ""
+            ReadRegStr $2 HKCU "${LEGACY_UNINST_KEY}" "UninstallString"
+        ${EndIf}
+        ${If} $2 != ""
+            # UninstallString may be quoted ("C:\...\uninstall.exe"); strip
+            # the surrounding quotes before taking the parent directory.
+            StrCpy $3 $2 1
+            ${If} $3 == '"'
+                StrCpy $2 $2 "" 1
+                StrCpy $2 $2 -1
+            ${EndIf}
+            ${GetParent} "$2" $1
+        ${EndIf}
+    ${EndIf}
     ${If} $1 != ""
-        # Installer-based legacy install: drop its Apps & Features entry and
+        # Installer-based legacy install: drop its Apps & Features entries
+        # (both hives — the old installer's shell context is unknown) and
         # remove its program directory. Guard: never remove a directory that
         # equals the new $INSTDIR (a user could have picked the old location
         # as the install target).
         DeleteRegKey HKLM "${LEGACY_UNINST_KEY}"
+        DeleteRegKey HKCU "${LEGACY_UNINST_KEY}"
         ${If} $1 != "$INSTDIR"
             RMDir /r "$1"
         ${EndIf}
