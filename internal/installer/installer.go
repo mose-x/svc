@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"svc/internal/apperr"
 	"svc/internal/config"
 	"svc/internal/downloader"
 	"svc/internal/extractor"
@@ -92,7 +93,7 @@ func verifyFileSHA256(filePath, expectedSHA256 string) error {
 
 	actual := hex.EncodeToString(h.Sum(nil))
 	if !strings.EqualFold(actual, expectedSHA256) {
-		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedSHA256, actual)
+		return apperr.New(apperr.ChecksumMismatch, map[string]string{"expected": expectedSHA256, "got": actual})
 	}
 	return nil
 }
@@ -128,14 +129,14 @@ func (s *Service) GetAllSdkStatus() []sdk.SdkStatus {
 
 func (s *Service) GetSdkStatus(sdkType string) (*sdk.SdkStatus, error) {
 	if s.registry == nil {
-		return nil, fmt.Errorf("application not fully initialized")
+		return nil, apperr.New(apperr.AppNotInitialized, nil)
 	}
 	if err := helpers.ValidatePathSegment(sdkType); err != nil {
 		return nil, err
 	}
 	f := s.registry.Get(sdk.SdkType(sdkType))
 	if f == nil {
-		return nil, fmt.Errorf("unknown SDK type: %s", sdkType)
+		return nil, apperr.New(apperr.UnknownSdkType, map[string]string{"sdk": sdkType})
 	}
 	status, err := f.GetLocalStatus()
 	if err != nil {
@@ -147,8 +148,10 @@ func (s *Service) GetSdkStatus(sdkType string) (*sdk.SdkStatus, error) {
 
 // completePathInfo fills the derived PATH-copy fields on a status: the
 // detected PATH version and the resolved binary path (the yellow "!" on the
-// detail page shows the latter). Fetchers that already resolved either field
-// (python, nodejs) keep their value.
+// detail page shows the latter), then applies the central classification so
+// SystemProtected/ExternalManager are correct for EVERY SDK type — the UI
+// hides the import action based on these fields, and before this only the
+// python/nodejs fetchers set them (jdk & friends leaked the import entry).
 func completePathInfo(status *sdk.SdkStatus, f sdk.VersionFetcher) {
 	if status == nil || !status.PathConfigured {
 		return
@@ -161,18 +164,26 @@ func completePathInfo(status *sdk.SdkStatus, f sdk.VersionFetcher) {
 		cmd, _ := f.VerifyCommand()
 		status.PathBinary = sdk.ResolveSystemCommand(cmd)
 	}
+	if status.PathBinary != "" {
+		cl := sdk.ClassifyPathCopy(f.Type(), status.PathBinary)
+		status.SystemProtected = cl.SystemProtected
+		status.ExternalManager = cl.ExternalManager
+		if cl.SystemProtected && status.SystemPath == "" {
+			status.SystemPath = status.PathBinary
+		}
+	}
 }
 
 func (s *Service) CheckSystemConflicts(sdkType string) ([]string, error) {
 	if s.registry == nil {
-		return nil, fmt.Errorf("application not fully initialized")
+		return nil, apperr.New(apperr.AppNotInitialized, nil)
 	}
 	if err := helpers.ValidatePathSegment(sdkType); err != nil {
 		return nil, err
 	}
 	f := s.registry.Get(sdk.SdkType(sdkType))
 	if f == nil {
-		return nil, fmt.Errorf("unknown SDK type: %s", sdkType)
+		return nil, apperr.New(apperr.UnknownSdkType, map[string]string{"sdk": sdkType})
 	}
 
 	var keys []string
@@ -185,7 +196,7 @@ func (s *Service) CheckSystemConflicts(sdkType string) ([]string, error) {
 
 func (s *Service) GetRemoteVersions(sdkType string) ([]sdk.VersionInfo, error) {
 	if s.registry == nil {
-		return nil, fmt.Errorf("application not fully initialized")
+		return nil, apperr.New(apperr.AppNotInitialized, nil)
 	}
 	if err := helpers.ValidatePathSegment(sdkType); err != nil {
 		return nil, err
@@ -193,7 +204,7 @@ func (s *Service) GetRemoteVersions(sdkType string) ([]sdk.VersionInfo, error) {
 	t := sdk.SdkType(sdkType)
 	f := s.registry.Get(t)
 	if f == nil {
-		return nil, fmt.Errorf("unknown SDK type: %s", sdkType)
+		return nil, apperr.New(apperr.UnknownSdkType, map[string]string{"sdk": sdkType})
 	}
 
 	// Cache-first: return the cached list immediately (memory → disk) so the UI
@@ -272,7 +283,7 @@ func (s *Service) refreshVersionsInBackground(t sdk.SdkType, f sdk.VersionFetche
 
 func (s *Service) InstallSdk(sdkTypeStr string, version string) error {
 	if s.registry == nil {
-		return fmt.Errorf("application not fully initialized")
+		return apperr.New(apperr.AppNotInitialized, nil)
 	}
 	if err := helpers.ValidatePathSegment(sdkTypeStr); err != nil {
 		return err
@@ -283,7 +294,7 @@ func (s *Service) InstallSdk(sdkTypeStr string, version string) error {
 	sdkType := sdk.SdkType(sdkTypeStr)
 	f := s.registry.Get(sdkType)
 	if f == nil {
-		return fmt.Errorf("unknown SDK type: %s", sdkTypeStr)
+		return apperr.New(apperr.UnknownSdkType, map[string]string{"sdk": sdkTypeStr})
 	}
 
 	logger.Info("Starting installation: %s %s", sdkTypeStr, version)
@@ -505,7 +516,7 @@ func (s *Service) GetInstallDir(sdkType string) string {
 
 func (s *Service) SwitchVersion(sdkTypeStr string, version string) error {
 	if s.registry == nil {
-		return fmt.Errorf("application not fully initialized")
+		return apperr.New(apperr.AppNotInitialized, nil)
 	}
 	if err := helpers.ValidatePathSegment(sdkTypeStr); err != nil {
 		return err
@@ -516,7 +527,7 @@ func (s *Service) SwitchVersion(sdkTypeStr string, version string) error {
 	sdkType := sdk.SdkType(sdkTypeStr)
 	f := s.registry.Get(sdkType)
 	if f == nil {
-		return fmt.Errorf("unknown SDK type: %s", sdkTypeStr)
+		return apperr.New(apperr.UnknownSdkType, map[string]string{"sdk": sdkTypeStr})
 	}
 
 	logger.Info("Switching %s version to: %s", sdkTypeStr, version)
@@ -524,7 +535,7 @@ func (s *Service) SwitchVersion(sdkTypeStr string, version string) error {
 	versionDir := s.cfg.SdkVersionDir(sdkTypeStr, version)
 	if _, err := os.Stat(versionDir); err != nil {
 		logger.Error("Version directory does not exist: %s", versionDir)
-		return fmt.Errorf("version directory does not exist: %s", version)
+		return apperr.New(apperr.VersionDirMissing, map[string]string{"version": version})
 	}
 
 	// M8: Set active version BEFORE ConfigureSdk (matching InstallSdk's M13
@@ -552,7 +563,7 @@ func (s *Service) SwitchVersion(sdkTypeStr string, version string) error {
 
 func (s *Service) GetSdkDownloadURL(sdkType string, version string) (string, error) {
 	if s.registry == nil {
-		return "", fmt.Errorf("application not fully initialized")
+		return "", apperr.New(apperr.AppNotInitialized, nil)
 	}
 	if err := helpers.ValidatePathSegment(sdkType); err != nil {
 		return "", err
@@ -562,7 +573,7 @@ func (s *Service) GetSdkDownloadURL(sdkType string, version string) (string, err
 	}
 	f := s.registry.Get(sdk.SdkType(sdkType))
 	if f == nil {
-		return "", fmt.Errorf("unknown SDK type: %s", sdkType)
+		return "", apperr.New(apperr.UnknownSdkType, map[string]string{"sdk": sdkType})
 	}
 	// Same proxy injection as InstallSdk: GetDownloadURL may issue HTTP API
 	// calls that must honor the user's proxy configuration.
