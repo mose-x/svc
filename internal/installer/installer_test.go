@@ -1,10 +1,123 @@
 package installer
 
 import (
+	"context"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	"svc/internal/config"
+	"svc/internal/sdk"
+	"svc/internal/wailsrt"
 )
+
+// recordingRuntime implements wailsrt.Runtime and records every emitted
+// event so tests can assert on the frontend-facing event stream.
+type recordingRuntime struct {
+	mu     sync.Mutex
+	events []recordedEvent
+}
+
+type recordedEvent struct {
+	name string
+	data []any
+}
+
+func (r *recordingRuntime) Context() context.Context { return context.Background() }
+
+func (r *recordingRuntime) EventsEmit(eventName string, data ...any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, recordedEvent{name: eventName, data: data})
+}
+
+func (r *recordingRuntime) OpenFileDialog(title string, filters []wailsrt.FileFilter) (string, error) {
+	return "", nil
+}
+
+func (r *recordingRuntime) OpenDirectoryDialog(title string) (string, error) { return "", nil }
+
+func (r *recordingRuntime) Quit() {}
+
+// newScanTestService wires a Service rooted in a temp HOME (never the real
+// ~/.svc) with a scrubbed PATH so no host binary (node/python/go/...) is
+// discovered: every GetLocalStatus stays hermetic and no version probe is
+// ever executed on a host binary.
+func newScanTestService(t *testing.T, rt wailsrt.Runtime) *Service {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("PATH", t.TempDir())
+	cfg, err := config.NewConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.SetSvcDir(filepath.Join(home, ".svc"))
+	cfg.SetHomeDir(home)
+	return New(cfg, sdk.NewRegistry(cfg, nil), nil, nil, nil, nil, nil, rt)
+}
+
+// TestGetAllSdkStatus_EmitsScanProgress pins the startup loading-screen
+// contract: one sdk:scan-progress event per SDK, in registry order, with
+// 1-based index, the total count and the display name, so the UI can show
+// "Checking Python (4/14)..." while the scan runs.
+func TestGetAllSdkStatus_EmitsScanProgress(t *testing.T) {
+	rt := &recordingRuntime{}
+	svc := newScanTestService(t, rt)
+
+	statuses := svc.GetAllSdkStatus()
+	want := sdk.AllSdkTypes()
+	if len(statuses) != len(want) {
+		t.Fatalf("GetAllSdkStatus returned %d statuses; want %d", len(statuses), len(want))
+	}
+
+	var scans []sdk.ScanProgress
+	for _, ev := range rt.events {
+		if ev.name != "sdk:scan-progress" {
+			t.Fatalf("unexpected event %q during GetAllSdkStatus", ev.name)
+		}
+		p, ok := ev.data[0].(sdk.ScanProgress)
+		if !ok {
+			t.Fatalf("sdk:scan-progress payload is %T; want sdk.ScanProgress", ev.data[0])
+		}
+		scans = append(scans, p)
+	}
+	if len(scans) != len(want) {
+		t.Fatalf("emitted %d sdk:scan-progress events; want %d", len(scans), len(want))
+	}
+	for i, sdkType := range want {
+		if scans[i].SdkType != sdkType {
+			t.Errorf("scan[%d].SdkType = %q; want %q", i, scans[i].SdkType, sdkType)
+		}
+		if scans[i].DisplayName != sdk.SdkDisplayName(sdkType) {
+			t.Errorf("scan[%d].DisplayName = %q; want %q", i, scans[i].DisplayName, sdk.SdkDisplayName(sdkType))
+		}
+		if scans[i].Index != i+1 || scans[i].Total != len(want) {
+			t.Errorf("scan[%d] = (%d/%d); want (%d/%d)", i, scans[i].Index, scans[i].Total, i+1, len(want))
+		}
+	}
+}
+
+// TestGetAllSdkStatus_NilRt_NoPanic covers the rt-less path: the progress
+// emit is best-effort and must never break the status scan itself.
+func TestGetAllSdkStatus_NilRt_NoPanic(t *testing.T) {
+	svc := newScanTestService(t, nil)
+	statuses := svc.GetAllSdkStatus()
+	if len(statuses) != len(sdk.AllSdkTypes()) {
+		t.Fatalf("GetAllSdkStatus with nil runtime returned %d statuses; want %d",
+			len(statuses), len(sdk.AllSdkTypes()))
+	}
+}
+
+// TestGetAllSdkStatus_NilRegistry covers the uninitialized-service path.
+func TestGetAllSdkStatus_NilRegistry(t *testing.T) {
+	svc := New(nil, nil, nil, nil, nil, nil, nil, nil)
+	if got := svc.GetAllSdkStatus(); got != nil {
+		t.Fatalf("GetAllSdkStatus with nil registry = %v; want nil", got)
+	}
+}
 
 // TestFilterResidualVersionDirs pins the display-layer filter that keeps the
 // atomic-replace byproducts ("<version>.old" / "<version>.new") out of the

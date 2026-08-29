@@ -98,12 +98,27 @@ func verifyFileSHA256(filePath, expectedSHA256 string) error {
 	return nil
 }
 
+func (s *Service) emitScanProgress(sdkType sdk.SdkType, index, total int) {
+	if s.rt == nil {
+		return
+	}
+	s.rt.EventsEmit("sdk:scan-progress", sdk.ScanProgress{
+		SdkType:     sdkType,
+		DisplayName: sdk.SdkDisplayName(sdkType),
+		Index:       index,
+		Total:       total,
+	})
+}
+
 func (s *Service) GetAllSdkStatus() []sdk.SdkStatus {
 	if s.registry == nil {
 		return nil
 	}
+	fetchers := s.registry.All()
+	total := len(fetchers)
 	var statuses []sdk.SdkStatus
-	for _, f := range s.registry.All() {
+	for i, f := range fetchers {
+		s.emitScanProgress(f.Type(), i+1, total)
 		status, err := f.GetLocalStatus()
 		if err != nil {
 			statuses = append(statuses, sdk.SdkStatus{
