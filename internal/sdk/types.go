@@ -250,6 +250,16 @@ type InstallProgress struct {
 	DownloadURL      string  `json:"downloadUrl"`
 }
 
+// ScanProgress reports per-SDK scan progress during GetAllSdkStatus (pushed
+// to the frontend via Wails Events so the startup loading screen can show
+// which SDK is being checked).
+type ScanProgress struct {
+	SdkType     SdkType `json:"sdkType"`
+	DisplayName string  `json:"displayName"`
+	Index       int     `json:"index"` // 1-based position in the scan
+	Total       int     `json:"total"`
+}
+
 // PackageManagerInfo describes a package manager
 type PackageManagerInfo struct {
 	Name      string  `json:"name"`      // npm, yarn, pnpm, composer, pip
