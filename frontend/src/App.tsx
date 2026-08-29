@@ -8,7 +8,7 @@ import DetailPanel from './components/Panel/DetailPanel'
 import HomePage from './components/HomePage/HomePage'
 import PathModal from './components/PathModal/PathModal'
 import SettingsPage from './components/Settings/SettingsPage'
-import { SdkStatus, SdkType, InstallProgress } from './types/sdk'
+import { SdkStatus, SdkType, InstallProgress, ScanProgress } from './types/sdk'
 import {
   GetAllSdkStatus,
   GetSettings,
@@ -44,6 +44,7 @@ function App() {
   const [showPathModal, setShowPathModal] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
   const [minBootDone, setMinBootDone] = useState(false)
+  const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null)
   const [appVersion, setAppVersion] = useState('')
 
   // Load settings + app version on mount
@@ -82,6 +83,16 @@ function App() {
     const MIN_LOADING_MS = 800
     const t = setTimeout(() => setMinBootDone(true), MIN_LOADING_MS)
     return () => clearTimeout(t)
+  }, [])
+
+  // Subscribe BEFORE the refresh effect below runs (declaration order): the
+  // backend emits one sdk:scan-progress event per SDK while GetAllSdkStatus
+  // scans, and the loading screen shows which SDK is being checked right now.
+  useEffect(() => {
+    const off = EventsOn('sdk:scan-progress', (p: ScanProgress) =>
+      setScanProgress(p),
+    )
+    return () => off()
   }, [])
 
   const refreshStatuses = useCallback(async () => {
@@ -217,6 +228,15 @@ function App() {
             <div style={{ fontSize: 15, color: isDark ? '#aaa' : '#666' }}>
               {t('sidebar.loadingSdk')}
             </div>
+            {scanProgress && (
+              <div style={{ fontSize: 13, color: isDark ? '#666' : '#999' }}>
+                {t('sidebar.loadingSdkDetail', {
+                  name: scanProgress.displayName,
+                  index: scanProgress.index,
+                  total: scanProgress.total,
+                })}
+              </div>
+            )}
           </div>
         ) : (
           <div className={`app-container ${isDark ? 'dark' : 'light'}`}>

@@ -64,6 +64,13 @@ export interface InstallProgress {
   downloadUrl: string
 }
 
+export interface ScanProgress {
+  sdkType: SdkType
+  displayName: string
+  index: number
+  total: number
+}
+
 export interface ProxySettings {
   enabled: boolean
   mode: 'system' | 'custom'

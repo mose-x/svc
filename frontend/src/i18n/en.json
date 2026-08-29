@@ -15,6 +15,7 @@
     "settings": "Settings",
     "configuredCount": "{{count}}/{{total}} configured",
     "loadingSdk": "Loading SDK status, please wait...",
+    "loadingSdkDetail": "Checking {{name}} ({{index}}/{{total}})…",
     "importTooltip": "Click to import into SVC",
     "systemProtectedTooltip": "System Python is in a protected OS path and cannot be imported. Click to install an app-managed version instead (it takes precedence via PATH).",
     "importConfirm": "Import {{sdk}} into SVC?",

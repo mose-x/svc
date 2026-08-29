@@ -15,6 +15,7 @@
     "settings": "系统设置",
     "configuredCount": "{{count}}/{{total}} 已配置",
     "loadingSdk": "正在加载SDK安装情况，请稍后...",
+    "loadingSdkDetail": "正在检查 {{name}}（{{index}}/{{total}}）…",
     "importTooltip": "点击一键导入 SVC 系统",
     "systemProtectedTooltip": "系统 Python 位于受保护路径，无法导入。点击安装应用管理的版本（安装后通过 PATH 优先级自动覆盖系统版本）。",
     "importConfirm": "导入 {{sdk}} 到 SVC？",
