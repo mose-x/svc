@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -99,6 +100,11 @@ func (s *Service) detectPM(name, cmd string, args []string, parent sdk.SdkType) 
 	if name == "cnpm" {
 		ver = parseCnpmVersion(string(out))
 	}
+	// Shims may print warnings before the version (e.g. Corepack's
+	// packageManager notice on yarn); keep the first semver-looking line.
+	if v := extractSemverLine(ver); v != "" {
+		ver = v
+	}
 	return sdk.PackageManagerInfo{Name: name, Version: ver, Installed: true, ParentSdk: parent}
 }
 
@@ -128,6 +134,21 @@ func parseCnpmVersion(raw string) string {
 	return line
 }
 
+// semverLineRe matches a leading semantic version token on a line.
+var semverLineRe = regexp.MustCompile(`^\d+\.\d+(\.\d+)?`)
+
+// extractSemverLine returns the first line of raw that starts with a
+// semantic version, or "" when no line qualifies (caller keeps its value).
+func extractSemverLine(raw string) string {
+	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if semverLineRe.MatchString(line) {
+			return line
+		}
+	}
+	return ""
+}
+
 // nodeSupportsCorepack returns true if the Node.js version is >= 16.9.0
 // (corepack was introduced in Node.js 16.9.0). Falls back to false on parse error.
 func nodeSupportsCorepack(version string) bool {
@@ -148,6 +169,31 @@ func nodeSupportsCorepack(version string) bool {
 		return true
 	}
 	return false
+}
+
+// pnpmSpecForNode returns the pnpm version spec compatible with the active
+// Node version. pnpm majors adopt new Node APIs as hard requirements (pnpm 9
+// needs Node >= 18.12; pnpm 10 needs node:sqlite, added in Node 23.4), so
+// blindly installing pnpm@latest on older Node yields a binary that crashes
+// at startup and a package-manager card that never shows a version.
+func pnpmSpecForNode(nodeVersion string) string {
+	nodeVersion = strings.TrimPrefix(nodeVersion, "v")
+	parts := strings.Split(nodeVersion, ".")
+	major, _ := strconv.Atoi(parts[0])
+	minor := 0
+	if len(parts) > 1 {
+		minor, _ = strconv.Atoi(parts[1])
+	}
+	switch {
+	case major > 23 || (major == 23 && minor >= 4):
+		return "latest" // pnpm 10+ (node:sqlite available)
+	case major > 18 || (major == 18 && minor >= 12):
+		return "9" // pnpm 9 requires Node >= 18.12
+	case major > 16 || (major == 16 && minor >= 14):
+		return "8" // pnpm 8 requires Node >= 16.14
+	default:
+		return "7" // last major supporting older Node lines
+	}
 }
 
 func (s *Service) InstallPackageManager(name string) error {
@@ -260,7 +306,10 @@ func resolveInPath(cmd, searchPath string) string {
 	if os.PathListSeparator == ':' {
 		sep = ":"
 	} else {
-		exts = []string{"", ".exe", ".cmd", ".bat"}
+		// Probe real Windows launchers first: npm global installs also ship
+		// extensionless POSIX sh wrappers (pnpm/yarn/...), which either fail
+		// to execute or emit shim noise before the version.
+		exts = []string{".cmd", ".exe", ".bat", ""}
 	}
 	for _, dir := range strings.Split(searchPath, sep) {
 		dir = strings.TrimSpace(dir)
@@ -289,6 +338,11 @@ func resolveInPath(cmd, searchPath string) string {
 // prepare/disable + npm, each 180s). enableCorepack is true for fresh
 // installs, false for updates.
 func (s *Service) installWithCorepackFallback(name, versionSpec string, enableCorepack bool) error {
+	if name == "pnpm" && versionSpec == "latest" {
+		// pnpm@latest may require newer Node APIs than the active version
+		// provides (e.g. node:sqlite on Node < 23.4); pin a compatible major.
+		versionSpec = pnpmSpecForNode(s.cfg.GetActiveVersion("nodejs"))
+	}
 	if nodeSupportsCorepack(s.cfg.GetActiveVersion("nodejs")) {
 		corepackOK := true
 		if enableCorepack {
