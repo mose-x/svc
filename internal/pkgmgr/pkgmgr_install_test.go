@@ -435,7 +435,8 @@ func TestInstallPnpm_DisablesCorepackBeforeNpmFallback(t *testing.T) {
 	}
 	calls := readMarker(t, cpMarker)
 	enableIdx := strings.Index(calls, "enable")
-	prepareIdx := strings.Index(calls, "prepare pnpm@latest --activate")
+	// Node 23.0.0 pins pnpm to major 9 (no node:sqlite yet).
+	prepareIdx := strings.Index(calls, "prepare pnpm@9 --activate")
 	disableIdx := strings.Index(calls, "disable pnpm")
 	if enableIdx < 0 || prepareIdx < 0 || disableIdx < 0 {
 		t.Fatalf("corepack calls = %q; want enable, prepare and disable", calls)
@@ -444,4 +445,38 @@ func TestInstallPnpm_DisablesCorepackBeforeNpmFallback(t *testing.T) {
 		t.Fatalf("corepack calls out of order: %q", calls)
 	}
 	assertMarker(t, npmMarker, true)
+}
+
+// On Windows, npm global installs ship both an extensionless POSIX wrapper
+// and a real .cmd launcher. Detection must prefer the launcher, otherwise
+// cards show shim noise or fail to execute the wrapper entirely.
+func TestGetPackageManagers_WindowsPrefersCmdLauncher(t *testing.T) {
+	if !config.IsWindows() {
+		t.Skip("extension probing order is Windows-specific")
+	}
+	s, binDir := newInstallTestService(t, "23.0.0")
+	// pnpm: bare wrapper is a trap, the .cmd launcher works.
+	if err := os.WriteFile(filepath.Join(binDir, "pnpm"), []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeTool(t, binDir, "pnpm", "@echo off\r\necho 9.15.0\r\nexit /b 0\r\n", "")
+	// yarn: launcher prints a noise line before the semver line.
+	writeFakeTool(t, binDir, "yarn", "@echo off\r\necho ! corepack warning\r\necho 4.18.0\r\nexit /b 0\r\n", "")
+
+	got := s.GetPackageManagers("nodejs")
+	versions := map[string]string{}
+	for _, pm := range got {
+		versions[pm.Name] = pm.Version
+		if pm.Name == "pnpm" || pm.Name == "yarn" {
+			if !pm.Installed {
+				t.Fatalf("%s card not installed despite launcher present", pm.Name)
+			}
+		}
+	}
+	if versions["pnpm"] != "9.15.0" {
+		t.Fatalf("pnpm version = %q; want 9.15.0 from the .cmd launcher", versions["pnpm"])
+	}
+	if versions["yarn"] != "4.18.0" {
+		t.Fatalf("yarn version = %q; want 4.18.0 (noise line filtered)", versions["yarn"])
+	}
 }

@@ -75,6 +75,54 @@ func TestParseCnpmVersion(t *testing.T) {
 	}
 }
 
+func TestPnpmSpecForNode(t *testing.T) {
+	tests := []struct {
+		node string
+		want string
+	}{
+		{"23.0.0", "9"}, // no node:sqlite yet
+		{"23.4.0", "latest"},
+		{"24.1.0", "latest"},
+		{"25.0.0", "latest"},
+		{"22.11.0", "9"},
+		{"18.12.0", "9"},
+		{"18.11.0", "8"},
+		{"16.14.0", "8"},
+		{"16.13.0", "7"},
+		{"14.17.0", "7"},
+		{"v23.0.0", "9"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.node, func(t *testing.T) {
+			if got := pnpmSpecForNode(tt.node); got != tt.want {
+				t.Errorf("pnpmSpecForNode(%q) = %q; want %q", tt.node, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractSemverLine(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"clean version", "4.18.0", "4.18.0"},
+		{"noise before version", "! corepack warning\n4.18.0", "4.18.0"},
+		{"crlf noise", "! warn\r\n1.2.3\r\n", "1.2.3"},
+		{"two-part version", "10.9", "10.9"},
+		{"no version", "cnpm@9.4.0 (path)", ""},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := extractSemverLine(tt.input); got != tt.want {
+				t.Errorf("extractSemverLine(%q) = %q; want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNodeSupportsCorepack(t *testing.T) {
 	tests := []struct {
 		version string
