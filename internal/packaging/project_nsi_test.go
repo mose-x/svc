@@ -90,6 +90,95 @@ func TestProjectNSI_UpgradeInPlace(t *testing.T) {
 	}
 }
 
+// TestProjectNSI_RegistryView64 pins the registry-view symmetry fix: the
+// uninstall key is written under SetRegView 64 (wails.writeUninstaller), so
+// every detection read must happen in the 64-bit view too. The installer is
+// a 32-bit WOW64 process whose default view is the 32-bit hive; without an
+// explicit SetRegView 64 before the reads, upgrade-in-place detection misses
+// the key on x64 (the v2.0.2-rc1 -> rc2 "previous install not found" bug).
+func TestProjectNSI_RegistryView64(t *testing.T) {
+	nsiPath := filepath.Join(findRepoRoot(t), "build", "windows", "installer", "project.nsi")
+	data, err := os.ReadFile(nsiPath)
+	if err != nil {
+		t.Skipf("project.nsi not found: %v", err)
+	}
+	content := strings.ReplaceAll(string(data), "\r\n", "\n")
+
+	// .onInit establishes the 64-bit view after the architecture check so
+	// SkipDirIfInstalled (a later page callback) reads the right hive.
+	onInitStart := strings.Index(content, "Function .onInit")
+	if onInitStart < 0 {
+		t.Fatal(".onInit not found")
+	}
+	onInitEnd := strings.Index(content[onInitStart:], "FunctionEnd")
+	if onInitEnd < 0 {
+		t.Fatal(".onInit has no FunctionEnd")
+	}
+	onInit := content[onInitStart : onInitStart+onInitEnd]
+	archIdx := strings.Index(onInit, "wails.checkArchitecture")
+	viewIdx := strings.Index(onInit, "SetRegView 64")
+	if archIdx < 0 || viewIdx < 0 {
+		t.Fatalf(".onInit must run checkArchitecture and SetRegView 64:\n%s", onInit)
+	}
+	if archIdx > viewIdx {
+		t.Fatal("SetRegView 64 must come after wails.checkArchitecture in .onInit")
+	}
+
+	// The view must be established before the SkipDirIfInstalled read.
+	firstView := strings.Index(content, "SetRegView 64")
+	detectRead := strings.Index(content, `ReadRegStr $0 HKLM "${UNINST_KEY}" "InstallLocation"`)
+	if detectRead < 0 {
+		t.Fatal("SkipDirIfInstalled registry read not found")
+	}
+	if firstView < 0 || firstView > detectRead {
+		t.Fatal("SetRegView 64 must precede the SkipDirIfInstalled registry read")
+	}
+
+	// The main install Section restates the view so the legacy-migration
+	// reads and the InstallLocation write do not rely on macro side effects.
+	sectionStart := strings.Index(content, "\nSection\n")
+	if sectionStart < 0 {
+		t.Fatal("main install Section not found")
+	}
+	sectionEnd := strings.Index(content[sectionStart:], "SectionEnd")
+	if sectionEnd < 0 {
+		t.Fatal("main install Section has no SectionEnd")
+	}
+	section := content[sectionStart : sectionStart+sectionEnd]
+	if !strings.Contains(section, "SetRegView 64") {
+		t.Fatal("main Section must restate SetRegView 64")
+	}
+
+	// Every uninstall-key read (current + legacy) must sit after the view
+	// switch.
+	for _, key := range []string{`"${UNINST_KEY}"`, `"${LEGACY_UNINST_KEY}"`} {
+		pos := 0
+		for {
+			i := strings.Index(content[pos:], "ReadRegStr")
+			if i < 0 {
+				break
+			}
+			i += pos
+			lineEnd := strings.Index(content[i:], "\n")
+			if lineEnd < 0 {
+				lineEnd = len(content) - i
+			}
+			line := content[i : i+lineEnd]
+			if strings.Contains(line, key) && i < firstView {
+				t.Fatalf("uninstall-key read precedes SetRegView 64: %s", line)
+			}
+			pos = i + 1
+		}
+	}
+
+	// Nothing may drop back to the 32-bit (or lastused) view.
+	for _, bad := range []string{"SetRegView 32", "SetRegView lastused"} {
+		if strings.Contains(content, bad) {
+			t.Errorf("project.nsi must not contain %q", bad)
+		}
+	}
+}
+
 // TestSvckillVbs verifies the installer's process-kill helper is fully silent:
 // it terminates the current/legacy app via WMI (no taskkill/cmd/powershell
 // console window can flash during install).
