@@ -51,6 +51,8 @@ const (
 	PrivateIp             Code = "private-ip"
 	HttpStatus            Code = "http-status"
 	SchemeNotAllowed      Code = "scheme-not-allowed"
+	InvalidPackageName    Code = "invalid-package-name"
+	ProtectedPackage      Code = "protected-package"
 )
 
 // New builds the marked error. params may be nil; values are interpolated
