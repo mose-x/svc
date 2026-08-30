@@ -29,8 +29,8 @@ func TestBuildLinuxScriptSortsPrereleaseBelowStable(t *testing.T) {
 		want string
 	}{
 		{
-			name: "hyphen converted to tilde into PKG_VER",
-			want: `PKG_VER="${VERSION/-/~}"`,
+			name: "hyphen converted to tilde into PKG_VER via sed",
+			want: `PKG_VER="$(printf '%s' "$VERSION" | sed 's/-/~/')"`,
 		},
 		{
 			name: "deb fpm uses the tilde version",
@@ -47,6 +47,26 @@ func TestBuildLinuxScriptSortsPrereleaseBelowStable(t *testing.T) {
 				t.Errorf("scripts/build-linux.sh missing %q", c.want)
 			}
 		})
+	}
+
+	// Execute the conversion the way the script does and assert the actual
+	// output: the earlier ${VERSION/-/~} form tilde-expanded the replacement
+	// at runtime (yielding $HOME paths) and broke the release build.
+	bashPath, err := exec.LookPath("bash")
+	if err == nil {
+		for in, want := range map[string]string{
+			"2.0.2-rc3": "2.0.2~rc3",
+			"2.0.2":     "2.0.2",
+		} {
+			out, err := exec.Command(bashPath, "-c",
+				`VERSION="`+in+`"; printf '%s' "$VERSION" | sed 's/-/~/'`).Output()
+			if err != nil {
+				t.Fatalf("conversion run failed for %s: %v", in, err)
+			}
+			if got := strings.TrimSpace(string(out)); got != want {
+				t.Fatalf("conversion(%q) = %q; want %q", in, got, want)
+			}
+		}
 	}
 
 	// Regression guard: the raw version (with hyphen) must not feed fpm.
