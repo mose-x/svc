@@ -30,4 +30,14 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'off',
     },
   },
+  // The pre-commit hook lints staged files via absolute paths, which bypass
+  // the flat-config ignores above; the Wails generator emits TS namespaces,
+  // so silence no-namespace for the generated bindings regardless of how the
+  // files are passed in.
+  {
+    files: ['**/wailsjs/**'],
+    rules: {
+      '@typescript-eslint/no-namespace': 'off',
+    },
+  },
 )

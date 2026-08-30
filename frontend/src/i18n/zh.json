@@ -92,7 +92,26 @@
     "pathBinaryTooltip": "查看该 SDK 在 PATH 中的具体路径",
     "pathBinaryTitle": "PATH 中的 SDK 路径",
     "pathBinaryDesc": "该 SDK 尚未纳入 SVC 管理，当前命令解析自以下路径：",
-    "installExternalManagerWarn": "检测到本机 {{sdk}} 当前由 {{manager}} 管理。继续安装后，SVC 安装的版本将通过 PATH 优先生效；日常版本切换建议继续使用 {{manager}} 维护。"
+    "installExternalManagerWarn": "检测到本机 {{sdk}} 当前由 {{manager}} 管理。继续安装后，SVC 安装的版本将通过 PATH 优先生效；日常版本切换建议继续使用 {{manager}} 维护。",
+    "npmRegistry": "npm 源",
+    "registryOfficial": "官方源",
+    "registryChinaMirror": "国内镜像",
+    "registryCustom": "自定义",
+    "registryCustomPlaceholder": "https://your.registry.example/",
+    "registryApply": "应用",
+    "registrySwitchSuccess": "已切换到 {{url}}",
+    "registrySwitchFail": "切换源失败: {{error}}",
+    "registryScopeHint": "对 SVC 管理的所有 Node.js 版本生效（共享用户级 npm 配置）",
+    "globalPackages": "全局 npm 包",
+    "globalPackagesEmpty": "未安装任何全局包",
+    "gpInstallPlaceholder": "输入包名安装，如 typescript 或 @scope/pkg",
+    "gpInstallSuccess": "{{name}} 安装成功",
+    "gpInstallFail": "{{name}} 安装失败: {{error}}",
+    "gpUninstall": "卸载",
+    "gpUninstallConfirm": "卸载 {{name}}？",
+    "gpUninstallConfirmDesc": "将移除全局安装的包 {{name}}。",
+    "gpUninstallSuccess": "{{name}} 已卸载",
+    "gpUninstallFail": "{{name}} 卸载失败: {{error}}"
   },
   "progress": {
     "downloading": "下载中...",
@@ -274,6 +293,8 @@
     "unknown-package-manager": "未知的包管理器：{{name}}",
     "private-ip": "不允许使用回环/内网 IP 地址：{{host}}",
     "http-status": "HTTP 状态码 {{status}}",
-    "scheme-not-allowed": "仅支持 http/https URL，当前协议：{{scheme}}"
+    "scheme-not-allowed": "仅支持 http/https URL，当前协议：{{scheme}}",
+    "invalid-package-name": "无效的 npm 包名：{{name}}",
+    "protected-package": "{{name}} 为受保护包，无法卸载"
   }
 }

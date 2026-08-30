@@ -66,6 +66,10 @@ export function GetEndpoints() {
   return window['go']['main']['App']['GetEndpoints']();
 }
 
+export function GetGlobalPackages(arg1) {
+  return window['go']['main']['App']['GetGlobalPackages'](arg1);
+}
+
 export function GetInstallDir(arg1) {
   return window['go']['main']['App']['GetInstallDir'](arg1);
 }
@@ -84,6 +88,10 @@ export function GetLogDir() {
 
 export function GetLogFiles() {
   return window['go']['main']['App']['GetLogFiles']();
+}
+
+export function GetNpmRegistry() {
+  return window['go']['main']['App']['GetNpmRegistry']();
 }
 
 export function GetPackageManagers(arg1) {
@@ -134,6 +142,10 @@ export function ImportSdk(arg1, arg2) {
   return window['go']['main']['App']['ImportSdk'](arg1, arg2);
 }
 
+export function InstallGlobalPackage(arg1) {
+  return window['go']['main']['App']['InstallGlobalPackage'](arg1);
+}
+
 export function InstallPackageManager(arg1) {
   return window['go']['main']['App']['InstallPackageManager'](arg1);
 }
@@ -170,12 +182,24 @@ export function SelectLocalFile() {
   return window['go']['main']['App']['SelectLocalFile']();
 }
 
+export function SetNpmRegistry(arg1) {
+  return window['go']['main']['App']['SetNpmRegistry'](arg1);
+}
+
 export function SwitchVersion(arg1, arg2) {
   return window['go']['main']['App']['SwitchVersion'](arg1, arg2);
 }
 
+export function UninstallGlobalPackage(arg1) {
+  return window['go']['main']['App']['UninstallGlobalPackage'](arg1);
+}
+
 export function UninstallVersion(arg1, arg2) {
   return window['go']['main']['App']['UninstallVersion'](arg1, arg2);
+}
+
+export function UpdateGlobalPackage(arg1) {
+  return window['go']['main']['App']['UpdateGlobalPackage'](arg1);
 }
 
 export function UpdatePackageManager(arg1) {

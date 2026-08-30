@@ -39,6 +39,8 @@ export function GetDefaultInstallPath():Promise<string>;
 
 export function GetEndpoints():Promise<Record<string, string>>;
 
+export function GetGlobalPackages(arg1:string):Promise<Array<sdk.GlobalPackage>>;
+
 export function GetInstallDir(arg1:string):Promise<string>;
 
 export function GetInstallPath():Promise<string>;
@@ -48,6 +50,8 @@ export function GetLogContent(arg1:string):Promise<string>;
 export function GetLogDir():Promise<string>;
 
 export function GetLogFiles():Promise<Array<logger.LogFileInfo>>;
+
+export function GetNpmRegistry():Promise<string>;
 
 export function GetPackageManagers(arg1:string):Promise<Array<sdk.PackageManagerInfo>>;
 
@@ -73,6 +77,8 @@ export function ImportPathSdk(arg1:string):Promise<void>;
 
 export function ImportSdk(arg1:string,arg2:string):Promise<void>;
 
+export function InstallGlobalPackage(arg1:string):Promise<void>;
+
 export function InstallPackageManager(arg1:string):Promise<void>;
 
 export function InstallSdk(arg1:string,arg2:string):Promise<void>;
@@ -91,8 +97,14 @@ export function SelectLocalDir():Promise<string>;
 
 export function SelectLocalFile():Promise<string>;
 
+export function SetNpmRegistry(arg1:string):Promise<void>;
+
 export function SwitchVersion(arg1:string,arg2:string):Promise<void>;
 
+export function UninstallGlobalPackage(arg1:string):Promise<void>;
+
 export function UninstallVersion(arg1:string,arg2:string):Promise<void>;
+
+export function UpdateGlobalPackage(arg1:string):Promise<void>;
 
 export function UpdatePackageManager(arg1:string):Promise<void>;
