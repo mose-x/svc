@@ -405,3 +405,43 @@ func TestGetPackageManagers_NodeJS_SixCards(t *testing.T) {
 		}
 	}
 }
+
+// writeFakeCorepackRecord records every corepack invocation (one line per
+// call) into marker, failing only on `prepare` (the signing-key scenario).
+func writeFakeCorepackRecord(t *testing.T, dir, marker string) {
+	t.Helper()
+	win := "@echo off\r\n" +
+		"echo %* >> \"" + marker + "\"\r\n" +
+		"if \"%1\"==\"prepare\" exit /b 1\r\n" +
+		"exit /b 0\r\n"
+	unix := "#!/bin/sh\n" +
+		"echo \"$@\" >> \"" + marker + "\"\n" +
+		"if [ \"$1\" = \"prepare\" ]; then exit 1; fi\n" +
+		"exit 0\n"
+	writeFakeTool(t, dir, "corepack", win, unix)
+}
+
+// A successful `corepack enable` leaves pnpm shims in the node dir; when
+// prepare then fails, the npm fallback must not hit EEXIST — the flow has
+// to run `corepack disable pnpm` first.
+func TestInstallPnpm_DisablesCorepackBeforeNpmFallback(t *testing.T) {
+	s, binDir := newInstallTestService(t, "23.0.0")
+	cpMarker := markerFile(t)
+	writeFakeCorepackRecord(t, binDir, cpMarker)
+	npmMarker := markerFile(t)
+	fakeNpmOK(t, binDir, npmMarker)
+	if err := s.InstallPackageManager("pnpm"); err != nil {
+		t.Fatalf("InstallPackageManager(pnpm) = %v", err)
+	}
+	calls := readMarker(t, cpMarker)
+	enableIdx := strings.Index(calls, "enable")
+	prepareIdx := strings.Index(calls, "prepare pnpm@latest --activate")
+	disableIdx := strings.Index(calls, "disable pnpm")
+	if enableIdx < 0 || prepareIdx < 0 || disableIdx < 0 {
+		t.Fatalf("corepack calls = %q; want enable, prepare and disable", calls)
+	}
+	if !(enableIdx < prepareIdx && prepareIdx < disableIdx) {
+		t.Fatalf("corepack calls out of order: %q", calls)
+	}
+	assertMarker(t, npmMarker, true)
+}
