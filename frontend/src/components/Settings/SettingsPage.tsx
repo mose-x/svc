@@ -12,6 +12,7 @@ import {
   Progress,
   Space,
   Tooltip,
+  Checkbox,
 } from 'antd'
 import {
   SettingOutlined,
@@ -52,7 +53,6 @@ import {
   CheckProxy,
   GetLogFiles,
   GetLogContent,
-  CleanLogs,
   GetLogDir,
   DeleteLogFile,
 } from '../../../wailsjs/go/main/App'
@@ -167,6 +167,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
   const [logContent, setLogContent] = useState('')
   const [loadingLogs, setLoadingLogs] = useState(false)
   const [cleaningLogs, setCleaningLogs] = useState(false)
+  const [selectedLogs, setSelectedLogs] = useState<string[]>([])
   const [logDir, setLogDir] = useState('')
 
   useEffect(() => {
@@ -204,7 +205,12 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
     setLoadingLogs(true)
     GetLogFiles()
       .then((files: any[]) => {
-        setLogFiles(files || [])
+        const list = files || []
+        setLogFiles(list)
+        // Drop selections for files that no longer exist.
+        setSelectedLogs((prev) =>
+          prev.filter((name) => list.some((f: any) => f?.name === name)),
+        )
       })
       .catch(() => {})
       .finally(() => {
@@ -285,21 +291,36 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
     }
   }
 
-  const handleCleanLogs = () => {
+  // Selective cleanup: delete only the checked log files (the old
+  // delete-all behavior was too blunt; today's active file is recreated
+  // empty by the backend if selected).
+  const handleCleanSelectedLogs = () => {
+    const names = selectedLogs
+    if (names.length === 0) return
     modal.confirm({
-      title: t('logs.cleanConfirm'),
-      content: t('logs.cleanConfirmDesc'),
+      title: t('logs.cleanSelectedConfirm', { count: names.length }),
+      content: t('logs.cleanSelectedDesc'),
       okText: t('app.confirm'),
       cancelText: t('app.cancel'),
       okButtonProps: { danger: true },
       onOk: async () => {
         setCleaningLogs(true)
         try {
-          await CleanLogs()
-          msgApi.success(t('logs.cleanSuccess'))
+          const failed: string[] = []
+          for (const name of names) {
+            try {
+              await DeleteLogFile(name)
+            } catch (e: any) {
+              failed.push(`${name}: ${errMsg(e)}`)
+            }
+          }
+          if (failed.length === 0) {
+            msgApi.success(t('logs.cleanSuccess'))
+          } else {
+            msgApi.error(t('logs.cleanFail', { error: failed.join('; ') }))
+          }
+          setSelectedLogs([])
           loadLogFiles()
-        } catch (e: any) {
-          msgApi.error(t('logs.cleanFail', { error: errMsg(e) }))
         } finally {
           setCleaningLogs(false)
         }
@@ -1154,11 +1175,11 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
                 <Button
                   size="small"
                   danger
-                  onClick={handleCleanLogs}
+                  onClick={handleCleanSelectedLogs}
                   loading={cleaningLogs}
-                  disabled={logFiles.length === 0}
+                  disabled={selectedLogs.length === 0}
                 >
-                  {t('logs.clean')}
+                  {t('logs.cleanSelected', { count: selectedLogs.length })}
                 </Button>
               </div>
             </div>
@@ -1210,6 +1231,25 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
                     color: 'var(--ant-color-text-secondary)',
                   }}
                 >
+                  <div style={{ width: 40 }}>
+                    <Checkbox
+                      checked={
+                        logFiles.length > 0 &&
+                        selectedLogs.length === logFiles.length
+                      }
+                      indeterminate={
+                        selectedLogs.length > 0 &&
+                        selectedLogs.length < logFiles.length
+                      }
+                      onChange={(e) =>
+                        setSelectedLogs(
+                          e.target.checked
+                            ? logFiles.map((f: any) => f.name)
+                            : [],
+                        )
+                      }
+                    />
+                  </div>
                   <div style={{ flex: 2 }}>{t('settings.filename')}</div>
                   <div style={{ flex: 1, textAlign: 'right' }}>
                     {t('logs.size')}
@@ -1234,6 +1274,18 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
                       color: 'var(--ant-color-text)',
                     }}
                   >
+                    <div style={{ width: 40 }}>
+                      <Checkbox
+                        checked={selectedLogs.includes(file.name)}
+                        onChange={(e) =>
+                          setSelectedLogs((prev) =>
+                            e.target.checked
+                              ? [...prev, file.name]
+                              : prev.filter((n) => n !== file.name),
+                          )
+                        }
+                      />
+                    </div>
                     <div style={{ flex: 2, fontFamily: 'monospace' }}>
                       {file.name}
                     </div>
