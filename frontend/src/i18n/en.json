@@ -94,6 +94,7 @@
     "pathBinaryDesc": "This SDK is not managed by SVC yet. Its command currently resolves to:",
     "installExternalManagerWarn": "{{sdk}} on this machine is currently managed by {{manager}}. After this install, the SVC copy takes precedence via PATH; for day-to-day version switching we recommend keeping {{manager}}.",
     "npmRegistry": "npm Registry",
+    "nodeSettings": "Node.js Settings",
     "registryOfficial": "Official",
     "registryChinaMirror": "China Mirror",
     "registryCustom": "Custom",

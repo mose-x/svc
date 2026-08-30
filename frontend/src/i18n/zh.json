@@ -94,6 +94,7 @@
     "pathBinaryDesc": "该 SDK 尚未纳入 SVC 管理，当前命令解析自以下路径：",
     "installExternalManagerWarn": "检测到本机 {{sdk}} 当前由 {{manager}} 管理。继续安装后，SVC 安装的版本将通过 PATH 优先生效；日常版本切换建议继续使用 {{manager}} 维护。",
     "npmRegistry": "npm 源",
+    "nodeSettings": "Node.js 设置",
     "registryOfficial": "官方源",
     "registryChinaMirror": "国内镜像",
     "registryCustom": "自定义",

@@ -19,6 +19,10 @@ const NpmRegistrySection: React.FC = () => {
   const [loadError, setLoadError] = useState('')
   const [customUrl, setCustomUrl] = useState('')
   const [applying, setApplying] = useState(false)
+  // Clicking the Custom radio reveals the URL input even when the current
+  // registry is official/mirror (without this the controlled Radio.Group
+  // stays on the previous value and nothing appears to happen).
+  const [pickingCustom, setPickingCustom] = useState(false)
 
   const fetchRegistry = useCallback(async () => {
     setLoading(true)
@@ -39,7 +43,7 @@ const NpmRegistrySection: React.FC = () => {
     fetchRegistry()
   }, [fetchRegistry])
 
-  const mode =
+  const derivedMode =
     registry === OFFICIAL
       ? 'official'
       : registry === CHINA
@@ -47,18 +51,20 @@ const NpmRegistrySection: React.FC = () => {
         : registry
           ? 'custom'
           : ''
+  const mode = pickingCustom ? 'custom' : derivedMode
 
   useEffect(() => {
     // Seed the custom input once the live registry value has loaded.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (mode === 'custom') setCustomUrl(registry)
-  }, [mode, registry])
+    if (derivedMode === 'custom') setCustomUrl(registry)
+  }, [derivedMode, registry])
 
   const apply = async (url: string) => {
     setApplying(true)
     try {
       await SetNpmRegistry(url)
       msgApi.success(t('detail.registrySwitchSuccess', { url }))
+      setPickingCustom(false)
       await fetchRegistry()
     } catch (e) {
       msgApi.error(t('detail.registrySwitchFail', { error: errMsg(e) }))
@@ -72,8 +78,9 @@ const NpmRegistrySection: React.FC = () => {
       apply(OFFICIAL)
     } else if (value === 'china') {
       apply(CHINA)
+    } else {
+      setPickingCustom(true)
     }
-    // 'custom' only reveals the URL input; applying is explicit there.
   }
 
   return (
