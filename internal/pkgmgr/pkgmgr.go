@@ -291,12 +291,13 @@ func truncatedTail(s string, maxLen int) string {
 	return "..." + s[cut:]
 }
 
-// runScopedCommand runs a command within the PATH scope of the specified SDK,
-// capturing combined output. Failures return an apperr.ExecFailed marker
-// carrying the command line and a bounded detail (timeout note, output tail,
-// or the exec error such as "executable file not found") so the frontend can
-// translate them instead of showing raw "exit status 1".
-func (s *Service) runScopedCommand(name string, parent sdk.SdkType, args ...string) error {
+// runScopedCommandCapture runs a command within the PATH scope of the
+// specified SDK and returns its whitespace-trimmed combined output. Failures
+// return the output alongside an apperr.ExecFailed marker carrying the
+// command line and a bounded detail (timeout note, output tail, or the exec
+// error such as "executable file not found") so the frontend can translate
+// them instead of showing raw "exit status 1".
+func (s *Service) runScopedCommandCapture(name string, parent sdk.SdkType, args ...string) (string, error) {
 	scopedPath := s.buildSdkPath(parent)
 	fullPath := resolveInPath(name, scopedPath)
 	// H3: Bound install/update commands so a hung process doesn't block forever.
@@ -309,21 +310,29 @@ func (s *Service) runScopedCommand(name string, parent sdk.SdkType, args ...stri
 	cmd := helpers.CreateCmdContext(ctx, fullPath, args...)
 	cmd.Env = helpers.ReplacePathEnv(os.Environ(), scopedPath)
 	out, err := cmd.CombinedOutput()
+	trimmed := strings.TrimSpace(string(out))
 	cmdLine := strings.TrimSpace(name + " " + strings.Join(args, " "))
 	if err == nil {
-		if tail := truncatedTail(string(out), outputTailLen); tail != "" {
-			logger.Info("%s succeeded: %s", cmdLine, tail)
+		if trimmed != "" {
+			logger.Info("%s succeeded: %s", cmdLine, truncatedTail(trimmed, outputTailLen))
 		}
-		return nil
+		return trimmed, nil
 	}
 	var detail string
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
 		detail = fmt.Sprintf("timed out after %v", scopedCommandTimeout)
-	case strings.TrimSpace(string(out)) != "":
-		detail = truncatedTail(string(out), outputTailLen)
+	case trimmed != "":
+		detail = truncatedTail(trimmed, outputTailLen)
 	default:
 		detail = err.Error()
 	}
-	return apperr.New(apperr.ExecFailed, map[string]string{"cmd": cmdLine, "detail": detail})
+	return trimmed, apperr.New(apperr.ExecFailed, map[string]string{"cmd": cmdLine, "detail": detail})
+}
+
+// runScopedCommand runs a command within the PATH scope of the specified SDK,
+// discarding its output. See runScopedCommandCapture for error semantics.
+func (s *Service) runScopedCommand(name string, parent sdk.SdkType, args ...string) error {
+	_, err := s.runScopedCommandCapture(name, parent, args...)
+	return err
 }
