@@ -288,8 +288,8 @@ func TestRunScopedCommand_OutputTailTruncated(t *testing.T) {
 		t.Fatal("runScopedCommand = nil; want error")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "...23456789") || !strings.HasSuffix(msg, "0123456789\"}") {
-		t.Fatalf("error = %q; want truncated tail ending with repeated digits", msg)
+	if !strings.Contains(msg, `"detail":"...`) || !strings.HasSuffix(msg, "0123456789\"}") {
+		t.Fatalf("error = %q; want truncated tail with ... prefix ending in repeated digits", msg)
 	}
 	if len(msg) > 1200 {
 		t.Fatalf("error length = %d; want bounded detail", len(msg))
