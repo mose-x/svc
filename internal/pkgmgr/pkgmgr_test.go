@@ -50,6 +50,31 @@ func TestTruncatedTail(t *testing.T) {
 	}
 }
 
+func TestParseCnpmVersion(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			"verbose report",
+			"cnpm@9.4.0 (C:\\node_modules\\cnpm\\lib\\parse_argv.js)\r\nnpm@9.9.2 (C:\\npm\\index.js)\r\nnode@23.0.0 (C:\\node.exe)",
+			"9.4.0",
+		},
+		{"plain version", "9.4.0\n", "9.4.0"},
+		{"name without parens", "cnpm@10.0.1", "10.0.1"},
+		{"empty output", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseCnpmVersion(tt.input)
+			if got != tt.want {
+				t.Errorf("parseCnpmVersion(%q) = %q; want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNodeSupportsCorepack(t *testing.T) {
 	tests := []struct {
 		version string

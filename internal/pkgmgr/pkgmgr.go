@@ -96,6 +96,9 @@ func (s *Service) detectPM(name, cmd string, args []string, parent sdk.SdkType) 
 	if name == "pip" {
 		ver = parsePipVersion(string(out))
 	}
+	if name == "cnpm" {
+		ver = parseCnpmVersion(string(out))
+	}
 	return sdk.PackageManagerInfo{Name: name, Version: ver, Installed: true, ParentSdk: parent}
 }
 
@@ -108,6 +111,21 @@ func parsePipVersion(raw string) string {
 		}
 	}
 	return ver
+}
+
+// parseCnpmVersion extracts the version from `cnpm --version`, which prints
+// a multi-line report whose first line is "cnpm@X.Y.Z (path)" followed by
+// npm/node/npminstall lines. Plain version outputs pass through.
+func parseCnpmVersion(raw string) string {
+	line := strings.TrimSpace(strings.SplitN(strings.TrimSpace(raw), "\n", 2)[0])
+	if strings.HasPrefix(line, "cnpm@") {
+		token := strings.TrimPrefix(line, "cnpm@")
+		if i := strings.IndexAny(token, " ("); i >= 0 {
+			token = token[:i]
+		}
+		return token
+	}
+	return line
 }
 
 // nodeSupportsCorepack returns true if the Node.js version is >= 16.9.0
@@ -264,10 +282,12 @@ func resolveInPath(cmd, searchPath string) string {
 // to `npm install -g name@versionSpec` when corepack is missing or fails.
 // Node >= 25 no longer ships corepack, and corepack prepare breaks when a
 // package's npm registry signing key rotates (corepack 0.29.4 was the last
-// release). A successful `corepack enable` followed by a failed prepare may
-// leave corepack shims behind; the npm fallback overwrites them. The worst
-// case is two bounded commands (corepack 180s + npm 180s). enableCorepack is
-// true for fresh installs, false for updates.
+// release). A successful `corepack enable` leaves shims (pnpm/pnpm.cmd)
+// behind even when prepare fails, and `npm install -g` refuses to overwrite
+// them (EEXIST); a best-effort `corepack disable <name>` clears them before
+// the fallback. The worst case is three bounded commands (corepack enable +
+// prepare/disable + npm, each 180s). enableCorepack is true for fresh
+// installs, false for updates.
 func (s *Service) installWithCorepackFallback(name, versionSpec string, enableCorepack bool) error {
 	if nodeSupportsCorepack(s.cfg.GetActiveVersion("nodejs")) {
 		corepackOK := true
@@ -283,6 +303,12 @@ func (s *Service) installWithCorepackFallback(name, versionSpec string, enableCo
 			} else {
 				logger.Warn("corepack prepare %s@%s failed (%v); falling back to npm install -g", name, versionSpec, err)
 			}
+		}
+		// Failed corepack may have left shims in the node dir (a successful
+		// enable, or a previous install); remove them so npm doesn't EEXIST.
+		// Best effort: a missing/broken corepack just falls through to npm.
+		if err := s.runScopedCommand("corepack", sdk.NodeJS, "disable", name); err != nil {
+			logger.Warn("corepack disable %s failed (%v); continuing with npm fallback", name, err)
 		}
 	}
 	return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", name+"@"+versionSpec)

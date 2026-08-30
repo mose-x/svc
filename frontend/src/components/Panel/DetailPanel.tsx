@@ -90,6 +90,13 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
   const [importing, setImporting] = useState(false)
   const [conflicts, setConflicts] = useState<string[]>([])
   const [nodeSettingsOpen, setNodeSettingsOpen] = useState(false)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const { message: msgApi } = App.useApp()
   const { t } = useTranslation()
   const [modal, modalContextHolder] = Modal.useModal()
@@ -520,12 +527,21 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
     }
   }
 
+  // Detection of freshly written shim files can transiently fail on Windows
+  // (file locks right after npm install); re-fetch a bit later as well.
+  const schedulePmRefetch = () => {
+    setTimeout(() => {
+      if (mounted.current) fetchPackageManagers()
+    }, 2500)
+  }
+
   const handlePmInstall = async (name: string) => {
     setPmLoading(name)
     try {
       await InstallPackageManager(name)
       msgApi.success(t('detail.pmInstallSuccess', { name }))
       fetchPackageManagers()
+      schedulePmRefetch()
     } catch (e: any) {
       msgApi.error(t('detail.pmInstallFail', { name, error: errMsg(e) }))
     } finally {
@@ -539,6 +555,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
       await UpdatePackageManager(name)
       msgApi.success(t('detail.pmUpdateSuccess', { name }))
       fetchPackageManagers()
+      schedulePmRefetch()
     } catch (e: any) {
       msgApi.error(t('detail.pmUpdateFail', { name, error: errMsg(e) }))
     } finally {
