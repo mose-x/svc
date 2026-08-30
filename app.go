@@ -328,6 +328,36 @@ func (a *App) UpdatePackageManager(name string) error {
 	return a.pkgmgrSvc.UpdatePackageManager(name)
 }
 
+// GetNpmRegistry returns the active Node.js installation's npm registry.
+func (a *App) GetNpmRegistry() (string, error) {
+	return a.pkgmgrSvc.GetNpmRegistry()
+}
+
+// SetNpmRegistry sets the npm registry (persisted to the user-level ~/.npmrc).
+func (a *App) SetNpmRegistry(url string) error {
+	return a.pkgmgrSvc.SetNpmRegistry(url)
+}
+
+// GetGlobalPackages lists globally installed npm packages of the active Node.js.
+func (a *App) GetGlobalPackages(sdkType string) ([]sdk.GlobalPackage, error) {
+	return a.pkgmgrSvc.GetGlobalPackages(sdkType)
+}
+
+// InstallGlobalPackage installs an npm package globally.
+func (a *App) InstallGlobalPackage(name string) error {
+	return a.pkgmgrSvc.InstallGlobalPackage(name)
+}
+
+// UninstallGlobalPackage removes a globally installed npm package.
+func (a *App) UninstallGlobalPackage(name string) error {
+	return a.pkgmgrSvc.UninstallGlobalPackage(name)
+}
+
+// UpdateGlobalPackage updates a global npm package to the latest version.
+func (a *App) UpdateGlobalPackage(name string) error {
+	return a.pkgmgrSvc.UpdateGlobalPackage(name)
+}
+
 // GetAllSdkStatus returns the local status of every known SDK.
 func (a *App) GetAllSdkStatus() []sdk.SdkStatus {
 	if a.installerSvc == nil {

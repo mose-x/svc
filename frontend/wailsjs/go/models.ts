@@ -102,12 +102,12 @@ export namespace pathmgr {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-		this.path = source["path"];
-		this.isManaged = source["isManaged"];
-		this.sdkType = source["sdkType"];
-		this.source = source["source"];
-		this.systemProtected = source["systemProtected"];
-		this.externalManager = source["externalManager"];
+	        this.path = source["path"];
+	        this.isManaged = source["isManaged"];
+	        this.sdkType = source["sdkType"];
+	        this.source = source["source"];
+	        this.systemProtected = source["systemProtected"];
+	        this.externalManager = source["externalManager"];
 	    }
 	}
 
@@ -129,6 +129,20 @@ export namespace sdk {
 	        this.sdkType = source["sdkType"];
 	        this.displayName = source["displayName"];
 	        this.defaultEndpoint = source["defaultEndpoint"];
+	    }
+	}
+	export class GlobalPackage {
+	    name: string;
+	    version: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GlobalPackage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.version = source["version"];
 	    }
 	}
 	export class PackageManagerInfo {
@@ -170,19 +184,19 @@ export namespace sdk {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-		this.sdkType = source["sdkType"];
-		this.displayName = source["displayName"];
-		this.configured = source["configured"];
-		this.pathConfigured = source["pathConfigured"];
-		this.pathVersion = source["pathVersion"];
-		this.currentVersion = source["currentVersion"];
-		this.installedVersions = source["installedVersions"];
-		this.installPath = source["installPath"];
-		this.needsSwitch = source["needsSwitch"];
-		this.systemProtected = source["systemProtected"];
-		this.systemPath = source["systemPath"];
-		this.externalManager = source["externalManager"];
-		this.pathBinary = source["pathBinary"];
+	        this.sdkType = source["sdkType"];
+	        this.displayName = source["displayName"];
+	        this.configured = source["configured"];
+	        this.pathConfigured = source["pathConfigured"];
+	        this.pathVersion = source["pathVersion"];
+	        this.currentVersion = source["currentVersion"];
+	        this.installedVersions = source["installedVersions"];
+	        this.installPath = source["installPath"];
+	        this.needsSwitch = source["needsSwitch"];
+	        this.systemProtected = source["systemProtected"];
+	        this.systemPath = source["systemPath"];
+	        this.externalManager = source["externalManager"];
+	        this.pathBinary = source["pathBinary"];
 	    }
 	}
 	export class VersionInfo {
@@ -283,3 +297,4 @@ export namespace update {
 	}
 
 }
+

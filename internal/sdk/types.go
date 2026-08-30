@@ -267,3 +267,9 @@ type PackageManagerInfo struct {
 	Installed bool    `json:"installed"` // whether installed
 	ParentSdk SdkType `json:"parentSdk"` // parent SDK type
 }
+
+// GlobalPackage describes one globally installed npm package
+type GlobalPackage struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}

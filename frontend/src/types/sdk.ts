@@ -21,6 +21,11 @@ export interface PackageManagerInfo {
   parentSdk: string
 }
 
+export interface GlobalPackage {
+  name: string
+  version: string
+}
+
 export interface SdkStatus {
   sdkType: SdkType
   displayName: string

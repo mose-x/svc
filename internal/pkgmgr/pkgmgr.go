@@ -49,6 +49,9 @@ func (s *Service) GetPackageManagers(sdkType string) []sdk.PackageManagerInfo {
 			s.detectPM("npm", "npm", []string{"--version"}, sdk.NodeJS),
 			s.detectPM("yarn", "yarn", []string{"--version"}, sdk.NodeJS),
 			s.detectPM("pnpm", "pnpm", []string{"--version"}, sdk.NodeJS),
+			s.detectPM("cnpm", "cnpm", []string{"--version"}, sdk.NodeJS),
+			s.detectPM("nrm", "nrm", []string{"--version"}, sdk.NodeJS),
+			s.detectPM("corepack", "corepack", []string{"--version"}, sdk.NodeJS),
 		}
 	case sdk.PHP:
 		return []sdk.PackageManagerInfo{
@@ -146,6 +149,25 @@ func (s *Service) InstallPackageManager(name string) error {
 			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Node.js"})
 		}
 		return s.installWithCorepackFallback("pnpm", "latest", true)
+	case "cnpm":
+		if s.cfg.GetActiveVersion("nodejs") == "" {
+			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Node.js"})
+		}
+		// cnpm itself lives on the China mirror; the flag is a distinct argv
+		// element so it never disturbs the user's configured registry.
+		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "cnpm", "--registry="+npmRegistryChina)
+	case "nrm":
+		if s.cfg.GetActiveVersion("nodejs") == "" {
+			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Node.js"})
+		}
+		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "nrm")
+	case "corepack":
+		if s.cfg.GetActiveVersion("nodejs") == "" {
+			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Node.js"})
+		}
+		// Deliberately no `corepack enable` here: enable creates yarn/pnpm
+		// shims and would silently change the other cards' state.
+		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "corepack")
 	case "composer":
 		if s.cfg.GetActiveVersion("php") == "" {
 			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "PHP"})
@@ -169,6 +191,12 @@ func (s *Service) UpdatePackageManager(name string) error {
 		return s.installWithCorepackFallback("yarn", "latest", false)
 	case "pnpm":
 		return s.installWithCorepackFallback("pnpm", "latest", false)
+	case "cnpm":
+		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "cnpm@latest", "--registry="+npmRegistryChina)
+	case "nrm":
+		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "nrm@latest")
+	case "corepack":
+		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "corepack@latest")
 	case "composer":
 		return s.runScopedCommand("composer", sdk.PHP, "self-update")
 	case "pip":
@@ -291,12 +319,13 @@ func truncatedTail(s string, maxLen int) string {
 	return "..." + s[cut:]
 }
 
-// runScopedCommand runs a command within the PATH scope of the specified SDK,
-// capturing combined output. Failures return an apperr.ExecFailed marker
-// carrying the command line and a bounded detail (timeout note, output tail,
-// or the exec error such as "executable file not found") so the frontend can
-// translate them instead of showing raw "exit status 1".
-func (s *Service) runScopedCommand(name string, parent sdk.SdkType, args ...string) error {
+// runScopedCommandCapture runs a command within the PATH scope of the
+// specified SDK and returns its whitespace-trimmed combined output. Failures
+// return the output alongside an apperr.ExecFailed marker carrying the
+// command line and a bounded detail (timeout note, output tail, or the exec
+// error such as "executable file not found") so the frontend can translate
+// them instead of showing raw "exit status 1".
+func (s *Service) runScopedCommandCapture(name string, parent sdk.SdkType, args ...string) (string, error) {
 	scopedPath := s.buildSdkPath(parent)
 	fullPath := resolveInPath(name, scopedPath)
 	// H3: Bound install/update commands so a hung process doesn't block forever.
@@ -309,21 +338,29 @@ func (s *Service) runScopedCommand(name string, parent sdk.SdkType, args ...stri
 	cmd := helpers.CreateCmdContext(ctx, fullPath, args...)
 	cmd.Env = helpers.ReplacePathEnv(os.Environ(), scopedPath)
 	out, err := cmd.CombinedOutput()
+	trimmed := strings.TrimSpace(string(out))
 	cmdLine := strings.TrimSpace(name + " " + strings.Join(args, " "))
 	if err == nil {
-		if tail := truncatedTail(string(out), outputTailLen); tail != "" {
-			logger.Info("%s succeeded: %s", cmdLine, tail)
+		if trimmed != "" {
+			logger.Info("%s succeeded: %s", cmdLine, truncatedTail(trimmed, outputTailLen))
 		}
-		return nil
+		return trimmed, nil
 	}
 	var detail string
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
 		detail = fmt.Sprintf("timed out after %v", scopedCommandTimeout)
-	case strings.TrimSpace(string(out)) != "":
-		detail = truncatedTail(string(out), outputTailLen)
+	case trimmed != "":
+		detail = truncatedTail(trimmed, outputTailLen)
 	default:
 		detail = err.Error()
 	}
-	return apperr.New(apperr.ExecFailed, map[string]string{"cmd": cmdLine, "detail": detail})
+	return trimmed, apperr.New(apperr.ExecFailed, map[string]string{"cmd": cmdLine, "detail": detail})
+}
+
+// runScopedCommand runs a command within the PATH scope of the specified SDK,
+// discarding its output. See runScopedCommandCapture for error semantics.
+func (s *Service) runScopedCommand(name string, parent sdk.SdkType, args ...string) error {
+	_, err := s.runScopedCommandCapture(name, parent, args...)
+	return err
 }

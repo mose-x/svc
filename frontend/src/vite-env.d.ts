@@ -27,6 +27,12 @@ declare global {
           DetectPathVersion: (sdkType: string) => Promise<string>
           InstallPackageManager: (name: string) => Promise<void>
           UpdatePackageManager: (name: string) => Promise<void>
+          GetNpmRegistry: () => Promise<string>
+          SetNpmRegistry: (url: string) => Promise<void>
+          GetGlobalPackages: (sdkType: string) => Promise<any[]>
+          InstallGlobalPackage: (name: string) => Promise<void>
+          UninstallGlobalPackage: (name: string) => Promise<void>
+          UpdateGlobalPackage: (name: string) => Promise<void>
           HasUpdateBackup: () => Promise<boolean>
         }
       }

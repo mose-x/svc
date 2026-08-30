@@ -56,6 +56,8 @@ import { formatBytes } from '../../utils/format'
 import { externalManagerName } from '../../constants/sdk'
 import { confirmAction } from '../../utils/confirmAction'
 import { errMsg } from '../../utils/error'
+import NpmRegistrySection from './NpmRegistrySection'
+import GlobalPackagesSection from './GlobalPackagesSection'
 
 interface DetailPanelProps {
   status: SdkStatus | undefined
@@ -792,6 +794,14 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
             ))}
           </div>
         </div>
+      )}
+
+      {/* npm Registry + Global Packages (Node.js only) */}
+      {status?.sdkType === 'nodejs' && status.currentVersion && (
+        <>
+          <NpmRegistrySection key={`registry-${status.currentVersion}`} />
+          <GlobalPackagesSection key={`global-${status.currentVersion}`} />
+        </>
       )}
 
       {/* Version Section */}

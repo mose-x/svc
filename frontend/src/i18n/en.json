@@ -92,7 +92,26 @@
     "pathBinaryTooltip": "Show the exact PATH location of this SDK",
     "pathBinaryTitle": "SDK path in PATH",
     "pathBinaryDesc": "This SDK is not managed by SVC yet. Its command currently resolves to:",
-    "installExternalManagerWarn": "{{sdk}} on this machine is currently managed by {{manager}}. After this install, the SVC copy takes precedence via PATH; for day-to-day version switching we recommend keeping {{manager}}."
+    "installExternalManagerWarn": "{{sdk}} on this machine is currently managed by {{manager}}. After this install, the SVC copy takes precedence via PATH; for day-to-day version switching we recommend keeping {{manager}}.",
+    "npmRegistry": "npm Registry",
+    "registryOfficial": "Official",
+    "registryChinaMirror": "China Mirror",
+    "registryCustom": "Custom",
+    "registryCustomPlaceholder": "https://your.registry.example/",
+    "registryApply": "Apply",
+    "registrySwitchSuccess": "Registry switched to {{url}}",
+    "registrySwitchFail": "Registry switch failed: {{error}}",
+    "registryScopeHint": "Applies to all Node.js versions managed by SVC (shared user-level npm config).",
+    "globalPackages": "Global npm Packages",
+    "globalPackagesEmpty": "No global packages installed",
+    "gpInstallPlaceholder": "Install a package by name, e.g. typescript or @scope/pkg",
+    "gpInstallSuccess": "{{name}} installed successfully",
+    "gpInstallFail": "{{name}} install failed: {{error}}",
+    "gpUninstall": "Uninstall",
+    "gpUninstallConfirm": "Uninstall {{name}}?",
+    "gpUninstallConfirmDesc": "This will remove the globally installed package {{name}}.",
+    "gpUninstallSuccess": "{{name}} uninstalled",
+    "gpUninstallFail": "{{name}} uninstall failed: {{error}}"
   },
   "progress": {
     "downloading": "Downloading...",
@@ -274,6 +293,8 @@
     "unknown-package-manager": "Unknown package manager: {{name}}",
     "private-ip": "Loopback/private IP addresses are not allowed: {{host}}",
     "http-status": "HTTP status {{status}}",
-    "scheme-not-allowed": "Only http/https URLs are allowed; got scheme: {{scheme}}"
+    "scheme-not-allowed": "Only http/https URLs are allowed; got scheme: {{scheme}}",
+    "invalid-package-name": "Invalid npm package name: {{name}}",
+    "protected-package": "{{name}} is protected and cannot be uninstalled"
   }
 }
