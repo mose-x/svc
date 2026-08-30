@@ -29,7 +29,7 @@ VERSION="${1:?version required, e.g. 1.1.0}"
 # Stable tags contain no hyphen and pass through unchanged. Asset file names
 # and about.json/wails.json keep the full version; only the deb/rpm metadata
 # uses PKG_VER.
-PKG_VER="${VERSION/-/~}"
+PKG_VER="$(printf '%s' "$VERSION" | sed 's/-/~/')"
 ARCH="${2:-$(go env GOARCH)}"
 case "$ARCH" in
   amd64) ASSET_ARCH="x64" ;;
