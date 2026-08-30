@@ -87,11 +87,20 @@ Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
 InstallDir "$PROGRAMFILES64\${INFO_PRODUCTNAME}" # Default installing folder ($PROGRAMFILES is Program Files folder).
 # Auto-detect previous install location from the registry (enables upgrade-in-place).
+# Note: NSIS evaluates InstallDirRegKey before .onInit under the default
+# (32-bit) registry view, so on x64 it never matches the 64-bit key written
+# by wails.writeUninstaller; real detection happens in SkipDirIfInstalled.
 InstallDirRegKey HKLM "${UNINST_KEY}" "InstallLocation"
 ShowInstDetails show # This will always show the installation details.
 
 Function .onInit
    !insertmacro wails.checkArchitecture
+   # Read the uninstall key in the native 64-bit registry view:
+   # wails.writeUninstaller writes it under SetRegView 64, but this
+   # installer is a 32-bit (WOW64) process whose default view is the 32-bit
+   # hive, so upgrade-in-place detection would otherwise miss it. The view
+   # persists into page callbacks, fixing SkipDirIfInstalled below.
+   SetRegView 64
 FunctionEnd
 
 # Skip the directory page on upgrade: if a previous install location of THIS
@@ -110,6 +119,12 @@ FunctionEnd
 
 Section
     !insertmacro wails.setShellContext
+
+    # Restate the 64-bit registry view (also set in .onInit) so this section
+    # is self-contained: the legacy-migration reads and the InstallLocation
+    # write below must match the view used by wails.writeUninstaller,
+    # regardless of macro side effects.
+    SetRegView 64
 
     !insertmacro wails.webview2runtime
 
