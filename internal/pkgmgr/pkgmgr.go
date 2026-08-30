@@ -2,6 +2,7 @@ package pkgmgr
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +13,7 @@ import (
 	"svc/internal/apperr"
 	"svc/internal/config"
 	"svc/internal/helpers"
+	"svc/internal/logger"
 	"svc/internal/sdk"
 )
 
@@ -21,6 +23,9 @@ import (
 type Service struct {
 	cfg      *config.Config
 	registry *sdk.Registry
+	// newCommandContext overrides runScopedCommand's context factory in
+	// tests (e.g. a 100ms bound); nil uses newScopedCommandContext (180s).
+	newCommandContext func() (context.Context, context.CancelFunc)
 }
 
 // New wires a Service. registry may be nil in tests that only exercise the
@@ -135,24 +140,12 @@ func (s *Service) InstallPackageManager(name string) error {
 		if s.cfg.GetActiveVersion("nodejs") == "" {
 			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Node.js"})
 		}
-		if nodeSupportsCorepack(s.cfg.GetActiveVersion("nodejs")) {
-			if err := s.runScopedCommand("corepack", sdk.NodeJS, "enable"); err != nil {
-				return err
-			}
-			return s.runScopedCommand("corepack", sdk.NodeJS, "prepare", "yarn@latest", "--activate")
-		}
-		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "yarn")
+		return s.installWithCorepackFallback("yarn", "latest", true)
 	case "pnpm":
 		if s.cfg.GetActiveVersion("nodejs") == "" {
 			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Node.js"})
 		}
-		if nodeSupportsCorepack(s.cfg.GetActiveVersion("nodejs")) {
-			if err := s.runScopedCommand("corepack", sdk.NodeJS, "enable"); err != nil {
-				return err
-			}
-			return s.runScopedCommand("corepack", sdk.NodeJS, "prepare", "pnpm@latest", "--activate")
-		}
-		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "pnpm")
+		return s.installWithCorepackFallback("pnpm", "latest", true)
 	case "composer":
 		if s.cfg.GetActiveVersion("php") == "" {
 			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "PHP"})
@@ -173,15 +166,9 @@ func (s *Service) UpdatePackageManager(name string) error {
 	case "npm":
 		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "npm@latest")
 	case "yarn":
-		if nodeSupportsCorepack(s.cfg.GetActiveVersion("nodejs")) {
-			return s.runScopedCommand("corepack", sdk.NodeJS, "prepare", "yarn@latest", "--activate")
-		}
-		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "yarn@latest")
+		return s.installWithCorepackFallback("yarn", "latest", false)
 	case "pnpm":
-		if nodeSupportsCorepack(s.cfg.GetActiveVersion("nodejs")) {
-			return s.runScopedCommand("corepack", sdk.NodeJS, "prepare", "pnpm@latest", "--activate")
-		}
-		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "pnpm@latest")
+		return s.installWithCorepackFallback("pnpm", "latest", false)
 	case "composer":
 		return s.runScopedCommand("composer", sdk.PHP, "self-update")
 	case "pip":
@@ -244,6 +231,35 @@ func resolveInPath(cmd, searchPath string) string {
 	return cmd
 }
 
+// installWithCorepackFallback installs/updates name (yarn|pnpm) at
+// versionSpec via corepack when the active Node.js supports it, falling back
+// to `npm install -g name@versionSpec` when corepack is missing or fails.
+// Node >= 25 no longer ships corepack, and corepack prepare breaks when a
+// package's npm registry signing key rotates (corepack 0.29.4 was the last
+// release). A successful `corepack enable` followed by a failed prepare may
+// leave corepack shims behind; the npm fallback overwrites them. The worst
+// case is two bounded commands (corepack 180s + npm 180s). enableCorepack is
+// true for fresh installs, false for updates.
+func (s *Service) installWithCorepackFallback(name, versionSpec string, enableCorepack bool) error {
+	if nodeSupportsCorepack(s.cfg.GetActiveVersion("nodejs")) {
+		corepackOK := true
+		if enableCorepack {
+			if err := s.runScopedCommand("corepack", sdk.NodeJS, "enable"); err != nil {
+				logger.Warn("corepack enable failed (%v); falling back to npm install -g %s@%s", err, name, versionSpec)
+				corepackOK = false
+			}
+		}
+		if corepackOK {
+			if err := s.runScopedCommand("corepack", sdk.NodeJS, "prepare", name+"@"+versionSpec, "--activate"); err == nil {
+				return nil
+			} else {
+				logger.Warn("corepack prepare %s@%s failed (%v); falling back to npm install -g", name, versionSpec, err)
+			}
+		}
+	}
+	return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", name+"@"+versionSpec)
+}
+
 // scopedCommandTimeout bounds package-manager install/update commands so a
 // hung process doesn't block forever. 180s (not 60s): corepack prepare and
 // npm install -g routinely exceed a minute on slow networks or registries,
@@ -256,16 +272,58 @@ func newScopedCommandContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), scopedCommandTimeout)
 }
 
-// runScopedCommand runs a command within the PATH scope of the specified SDK
+// outputTailLen bounds how much command output rides along in an exec-failed
+// marker; long npm/corepack transcripts must not bloat the error JSON.
+const outputTailLen = 500
+
+// truncatedTail returns the last maxLen characters of s (whitespace-trimmed),
+// prefixed with "..." when truncated. The cut snaps forward past UTF-8
+// continuation bytes so the result never contains a split rune.
+func truncatedTail(s string, maxLen int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= maxLen {
+		return s
+	}
+	cut := len(s) - maxLen
+	for cut < len(s) && s[cut]&0xC0 == 0x80 {
+		cut++
+	}
+	return "..." + s[cut:]
+}
+
+// runScopedCommand runs a command within the PATH scope of the specified SDK,
+// capturing combined output. Failures return an apperr.ExecFailed marker
+// carrying the command line and a bounded detail (timeout note, output tail,
+// or the exec error such as "executable file not found") so the frontend can
+// translate them instead of showing raw "exit status 1".
 func (s *Service) runScopedCommand(name string, parent sdk.SdkType, args ...string) error {
 	scopedPath := s.buildSdkPath(parent)
 	fullPath := resolveInPath(name, scopedPath)
 	// H3: Bound install/update commands so a hung process doesn't block forever.
-	ctx, cancel := newScopedCommandContext()
+	newCtx := s.newCommandContext
+	if newCtx == nil {
+		newCtx = newScopedCommandContext
+	}
+	ctx, cancel := newCtx()
 	defer cancel()
 	cmd := helpers.CreateCmdContext(ctx, fullPath, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 	cmd.Env = helpers.ReplacePathEnv(os.Environ(), scopedPath)
-	return cmd.Run()
+	out, err := cmd.CombinedOutput()
+	cmdLine := strings.TrimSpace(name + " " + strings.Join(args, " "))
+	if err == nil {
+		if tail := truncatedTail(string(out), outputTailLen); tail != "" {
+			logger.Info("%s succeeded: %s", cmdLine, tail)
+		}
+		return nil
+	}
+	var detail string
+	switch {
+	case ctx.Err() == context.DeadlineExceeded:
+		detail = fmt.Sprintf("timed out after %v", scopedCommandTimeout)
+	case strings.TrimSpace(string(out)) != "":
+		detail = truncatedTail(string(out), outputTailLen)
+	default:
+		detail = err.Error()
+	}
+	return apperr.New(apperr.ExecFailed, map[string]string{"cmd": cmdLine, "detail": detail})
 }

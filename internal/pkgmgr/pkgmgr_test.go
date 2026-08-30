@@ -24,6 +24,32 @@ func TestParsePipVersion(t *testing.T) {
 	}
 }
 
+func TestTruncatedTail(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		maxLen int
+		want   string
+	}{
+		{"short unchanged", "abc", 10, "abc"},
+		{"trims whitespace", "  abc \n", 10, "abc"},
+		{"exact length unchanged", "abcde", 5, "abcde"},
+		{"truncated with prefix", "abcdefgh", 3, "...fgh"},
+		{"empty", "", 10, ""},
+		{"whitespace only", "   ", 10, ""},
+		{"multibyte cut on rune boundary", "aaaa中", 3, "...中"},
+		{"multibyte cut inside rune snaps to end", "aaa中", 2, "..."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncatedTail(tt.input, tt.maxLen)
+			if got != tt.want {
+				t.Errorf("truncatedTail(%q, %d) = %q; want %q", tt.input, tt.maxLen, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNodeSupportsCorepack(t *testing.T) {
 	tests := []struct {
 		version string
