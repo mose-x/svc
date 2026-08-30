@@ -22,6 +22,14 @@
 set -euo pipefail
 
 VERSION="${1:?version required, e.g. 1.1.0}"
+# Package-metadata version: apt/dnf sort "2.0.2-rc2" ABOVE the final "2.0.2",
+# which would strand rc users (no upgrade path to the stable release). The
+# tilde sorts below everything (incl. the empty revision), so "2.0.2~rc2"
+# upgrades cleanly to "2.0.2" in both dpkg and rpmvercmp (rpm >= 4.10).
+# Stable tags contain no hyphen and pass through unchanged. Asset file names
+# and about.json/wails.json keep the full version; only the deb/rpm metadata
+# uses PKG_VER.
+PKG_VER="${VERSION/-/~}"
 ARCH="${2:-$(go env GOARCH)}"
 case "$ARCH" in
   amd64) ASSET_ARCH="x64" ;;
@@ -90,7 +98,7 @@ for sz in 16 32 48 64 128 256 512; do
 done
 
 fpm -s dir -t deb \
-  -n svc -v "${VERSION}" -a "${DEB_ARCH}" \
+  -n svc -v "${PKG_VER}" -a "${DEB_ARCH}" \
   --depends libgtk-3-0 \
   --depends libwebkit2gtk-4.0-37 \
   --depends libayatana-appindicator3-1 \
@@ -101,7 +109,7 @@ fpm -s dir -t deb \
   "$STAGING/share/=/usr/share/"
 
 fpm -s dir -t rpm \
-  -n svc -v "${VERSION}" -a "${RPM_ARCH}" \
+  -n svc -v "${PKG_VER}" -a "${RPM_ARCH}" \
   --depends gtk3 \
   --depends webkit2gtk3 \
   --depends libayatana-appindicator3 \
