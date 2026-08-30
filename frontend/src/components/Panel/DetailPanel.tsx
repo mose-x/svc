@@ -27,6 +27,7 @@ import {
   FileOutlined,
   WarningOutlined,
   ExclamationCircleFilled,
+  SettingOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import {
@@ -88,6 +89,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
   const [switching, setSwitching] = useState(false)
   const [importing, setImporting] = useState(false)
   const [conflicts, setConflicts] = useState<string[]>([])
+  const [nodeSettingsOpen, setNodeSettingsOpen] = useState(false)
   const { message: msgApi } = App.useApp()
   const { t } = useTranslation()
   const [modal, modalContextHolder] = Modal.useModal()
@@ -683,6 +685,28 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
             />
           </Tooltip>
         )}
+        {status.sdkType === 'nodejs' && status.currentVersion && (
+          <Tooltip title={t('detail.nodeSettings')}>
+            <SettingOutlined
+              onClick={() => setNodeSettingsOpen(true)}
+              style={{
+                position: 'absolute',
+                top: 12,
+                right:
+                  12 +
+                  (status.needsSwitch ? 24 : 0) +
+                  (conflicts.length > 0 ? 24 : 0) +
+                  (status.pathConfigured &&
+                  !status.configured &&
+                  status.pathBinary
+                    ? 24
+                    : 0),
+                fontSize: 18,
+                cursor: 'pointer',
+              }}
+            />
+          </Tooltip>
+        )}
         <h2>
           {status.displayName}
           <span
@@ -796,12 +820,22 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
         </div>
       )}
 
-      {/* npm Registry + Global Packages (Node.js only) */}
+      {/* npm Registry + Global Packages (Node.js only): moved into a modal
+          so the page keeps room for the version list. */}
       {status?.sdkType === 'nodejs' && status.currentVersion && (
-        <>
+        <Modal
+          open={nodeSettingsOpen}
+          title={t('detail.nodeSettings')}
+          footer={null}
+          width={600}
+          destroyOnClose
+          onCancel={() => setNodeSettingsOpen(false)}
+        >
           <NpmRegistrySection key={`registry-${status.currentVersion}`} />
-          <GlobalPackagesSection key={`global-${status.currentVersion}`} />
-        </>
+          <div style={{ marginTop: 16 }}>
+            <GlobalPackagesSection key={`global-${status.currentVersion}`} />
+          </div>
+        </Modal>
       )}
 
       {/* Version Section */}
