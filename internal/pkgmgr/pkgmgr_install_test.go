@@ -127,7 +127,7 @@ func assertMarker(t *testing.T, marker string, wantPresent bool) {
 
 func TestInstallPackageManager_Guards(t *testing.T) {
 	s, _ := newInstallTestService(t, "")
-	for _, name := range []string{"pnpm", "yarn"} {
+	for _, name := range []string{"pnpm", "yarn", "cnpm", "nrm", "corepack"} {
 		err := s.InstallPackageManager(name)
 		if err == nil || !strings.HasPrefix(err.Error(), "[svc:need-sdk]") {
 			t.Errorf("InstallPackageManager(%q) = %v; want need-sdk marker", name, err)
@@ -326,5 +326,82 @@ func TestRunScopedCommand_Timeout(t *testing.T) {
 	}
 	if !strings.Contains(msg, "timed out") {
 		t.Fatalf("error = %q; want timed out detail", msg)
+	}
+}
+
+func TestInstallCnpm_PinsChinaMirrorRegistry(t *testing.T) {
+	s, binDir := newInstallTestService(t, "23.0.0")
+	marker := markerFile(t)
+	writeFakeNpmRecord(t, binDir, marker)
+	if err := s.InstallPackageManager("cnpm"); err != nil {
+		t.Fatalf("InstallPackageManager(cnpm) = %v", err)
+	}
+	if got := readMarker(t, marker); got != "install -g cnpm --registry=https://registry.npmmirror.com" {
+		t.Fatalf("npm argv = %q; want pinned mirror registry", got)
+	}
+}
+
+func TestUpdateCnpm_PinsChinaMirrorRegistry(t *testing.T) {
+	s, binDir := newInstallTestService(t, "23.0.0")
+	marker := markerFile(t)
+	writeFakeNpmRecord(t, binDir, marker)
+	if err := s.UpdatePackageManager("cnpm"); err != nil {
+		t.Fatalf("UpdatePackageManager(cnpm) = %v", err)
+	}
+	if got := readMarker(t, marker); got != "install -g cnpm@latest --registry=https://registry.npmmirror.com" {
+		t.Fatalf("npm argv = %q; want pinned mirror registry", got)
+	}
+}
+
+func TestInstallNrm_UsesNpm(t *testing.T) {
+	s, binDir := newInstallTestService(t, "23.0.0")
+	marker := markerFile(t)
+	writeFakeNpmRecord(t, binDir, marker)
+	if err := s.InstallPackageManager("nrm"); err != nil {
+		t.Fatalf("InstallPackageManager(nrm) = %v", err)
+	}
+	if got := readMarker(t, marker); got != "install -g nrm" {
+		t.Fatalf("npm argv = %q; want install -g nrm", got)
+	}
+}
+
+func TestInstallCorepack_NoEnable(t *testing.T) {
+	s, binDir := newInstallTestService(t, "23.0.0")
+	marker := markerFile(t)
+	writeFakeNpmRecord(t, binDir, marker)
+	if err := s.InstallPackageManager("corepack"); err != nil {
+		t.Fatalf("InstallPackageManager(corepack) = %v", err)
+	}
+	got := readMarker(t, marker)
+	if got != "install -g corepack" || strings.Contains(got, "enable") {
+		t.Fatalf("npm argv = %q; want bare install without enable", got)
+	}
+}
+
+func TestGetPackageManagers_NodeJS_SixCards(t *testing.T) {
+	s, binDir := newInstallTestService(t, "23.0.0")
+	for _, name := range []string{"npm", "yarn", "pnpm", "cnpm", "nrm"} {
+		writeFakeTool(t, binDir, name,
+			"@echo off\r\necho 1.2.3\r\nexit /b 0\r\n",
+			"#!/bin/sh\necho 1.2.3\n")
+	}
+	got := s.GetPackageManagers("nodejs")
+	if len(got) != 6 {
+		t.Fatalf("GetPackageManagers returned %d cards; want 6", len(got))
+	}
+	wantNames := []string{"npm", "yarn", "pnpm", "cnpm", "nrm", "corepack"}
+	for i, pm := range got {
+		if pm.Name != wantNames[i] {
+			t.Fatalf("card %d = %q; want %q", i, pm.Name, wantNames[i])
+		}
+		if pm.Name == "corepack" {
+			if pm.Installed {
+				t.Fatal("corepack card installed despite missing binary")
+			}
+			continue
+		}
+		if !pm.Installed || pm.Version != "1.2.3" {
+			t.Fatalf("%s card = %+v; want installed v1.2.3", pm.Name, pm)
+		}
 	}
 }

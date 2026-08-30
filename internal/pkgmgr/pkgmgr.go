@@ -49,6 +49,9 @@ func (s *Service) GetPackageManagers(sdkType string) []sdk.PackageManagerInfo {
 			s.detectPM("npm", "npm", []string{"--version"}, sdk.NodeJS),
 			s.detectPM("yarn", "yarn", []string{"--version"}, sdk.NodeJS),
 			s.detectPM("pnpm", "pnpm", []string{"--version"}, sdk.NodeJS),
+			s.detectPM("cnpm", "cnpm", []string{"--version"}, sdk.NodeJS),
+			s.detectPM("nrm", "nrm", []string{"--version"}, sdk.NodeJS),
+			s.detectPM("corepack", "corepack", []string{"--version"}, sdk.NodeJS),
 		}
 	case sdk.PHP:
 		return []sdk.PackageManagerInfo{
@@ -146,6 +149,25 @@ func (s *Service) InstallPackageManager(name string) error {
 			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Node.js"})
 		}
 		return s.installWithCorepackFallback("pnpm", "latest", true)
+	case "cnpm":
+		if s.cfg.GetActiveVersion("nodejs") == "" {
+			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Node.js"})
+		}
+		// cnpm itself lives on the China mirror; the flag is a distinct argv
+		// element so it never disturbs the user's configured registry.
+		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "cnpm", "--registry="+npmRegistryChina)
+	case "nrm":
+		if s.cfg.GetActiveVersion("nodejs") == "" {
+			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Node.js"})
+		}
+		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "nrm")
+	case "corepack":
+		if s.cfg.GetActiveVersion("nodejs") == "" {
+			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Node.js"})
+		}
+		// Deliberately no `corepack enable` here: enable creates yarn/pnpm
+		// shims and would silently change the other cards' state.
+		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "corepack")
 	case "composer":
 		if s.cfg.GetActiveVersion("php") == "" {
 			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "PHP"})
@@ -169,6 +191,12 @@ func (s *Service) UpdatePackageManager(name string) error {
 		return s.installWithCorepackFallback("yarn", "latest", false)
 	case "pnpm":
 		return s.installWithCorepackFallback("pnpm", "latest", false)
+	case "cnpm":
+		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "cnpm@latest", "--registry="+npmRegistryChina)
+	case "nrm":
+		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "nrm@latest")
+	case "corepack":
+		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "corepack@latest")
 	case "composer":
 		return s.runScopedCommand("composer", sdk.PHP, "self-update")
 	case "pip":
