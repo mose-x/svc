@@ -96,6 +96,9 @@ func (s *Service) detectPM(name, cmd string, args []string, parent sdk.SdkType) 
 	if name == "pip" {
 		ver = parsePipVersion(string(out))
 	}
+	if name == "cnpm" {
+		ver = parseCnpmVersion(string(out))
+	}
 	return sdk.PackageManagerInfo{Name: name, Version: ver, Installed: true, ParentSdk: parent}
 }
 
@@ -108,6 +111,21 @@ func parsePipVersion(raw string) string {
 		}
 	}
 	return ver
+}
+
+// parseCnpmVersion extracts the version from `cnpm --version`, which prints
+// a multi-line report whose first line is "cnpm@X.Y.Z (path)" followed by
+// npm/node/npminstall lines. Plain version outputs pass through.
+func parseCnpmVersion(raw string) string {
+	line := strings.TrimSpace(strings.SplitN(strings.TrimSpace(raw), "\n", 2)[0])
+	if strings.HasPrefix(line, "cnpm@") {
+		token := strings.TrimPrefix(line, "cnpm@")
+		if i := strings.IndexAny(token, " ("); i >= 0 {
+			token = token[:i]
+		}
+		return token
+	}
+	return line
 }
 
 // nodeSupportsCorepack returns true if the Node.js version is >= 16.9.0
