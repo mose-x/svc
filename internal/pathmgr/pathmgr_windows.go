@@ -1,6 +1,7 @@
 package pathmgr
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,42 @@ const (
 	systemEnvKey = `SYSTEM\CurrentControlSet\Control\Session Manager\Environment`
 	userEnvKey   = `Environment`
 )
+
+// readUserPathValue reads the user PATH together with its registry value type.
+// A missing value is a legitimate fresh-profile state and returns existed=false
+// with no error. Any other problem — access denied, or an unsupported type such
+// as REG_MULTI_SZ/REG_DWORD — is returned as an error so callers abort instead
+// of clobbering a value they could not understand. Mirrors the shimmanager
+// helper of the same name; kept local to avoid a cross-package dependency.
+func readUserPathValue(k registry.Key) (val string, valType uint32, existed bool, err error) {
+	// GetValue with a nil buffer only queries the size and type.
+	_, valType, err = k.GetValue("Path", nil)
+	if errors.Is(err, registry.ErrNotExist) {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, fmt.Errorf("failed to probe user PATH type: %w", err)
+	}
+	if valType != registry.SZ && valType != registry.EXPAND_SZ {
+		return "", 0, false, fmt.Errorf("user PATH has unsupported registry value type %d; refusing to modify it", valType)
+	}
+	val, _, err = k.GetStringValue("Path")
+	if err != nil {
+		return "", 0, false, fmt.Errorf("failed to read user PATH: %w", err)
+	}
+	return val, valType, true, nil
+}
+
+// writeUserPathValue writes the user PATH preserving its value type. The type
+// decision lives in the pure choosePathValueType function (unit-tested on every
+// platform); writing REG_SZ over a REG_EXPAND_SZ PATH would silently stop %VAR%
+// expansion, which is the O8 regression this prevents.
+func writeUserPathValue(k registry.Key, val string, origType uint32, existed bool) error {
+	if choosePathValueType(origType, existed, val) == regTypeExpandSZ {
+		return k.SetExpandStringValue("Path", val)
+	}
+	return k.SetStringValue("Path", val)
+}
 
 // WindowsPathManager handles PATH management on Windows.
 // When a ShimConfigurer is injected (via SetShimManager), all SDK configuration
@@ -113,9 +150,9 @@ func (m *WindowsPathManager) addToUserPath(binPath string, sdkType string) error
 	}
 	defer k.Close()
 
-	currentPath, _, err := k.GetStringValue("Path")
+	currentPath, valType, existed, err := readUserPathValue(k)
 	if err != nil {
-		currentPath = ""
+		return err
 	}
 
 	sdkDir := m.cfg.SdkDir(sdkType)
@@ -135,7 +172,7 @@ func (m *WindowsPathManager) addToUserPath(binPath string, sdkType string) error
 	filtered = append([]string{binPath}, filtered...)
 	newPath := strings.Join(filtered, ";")
 
-	return k.SetStringValue("Path", newPath)
+	return writeUserPathValue(k, newPath, valType, existed)
 }
 
 func (m *WindowsPathManager) removeSvcPathsFromUserPath(sdkType string) error {
@@ -145,8 +182,11 @@ func (m *WindowsPathManager) removeSvcPathsFromUserPath(sdkType string) error {
 	}
 	defer k.Close()
 
-	currentPath, _, err := k.GetStringValue("Path")
+	currentPath, valType, existed, err := readUserPathValue(k)
 	if err != nil {
+		return err
+	}
+	if !existed {
 		return nil
 	}
 
@@ -165,7 +205,7 @@ func (m *WindowsPathManager) removeSvcPathsFromUserPath(sdkType string) error {
 	}
 
 	newPath := strings.Join(filtered, ";")
-	return k.SetStringValue("Path", newPath)
+	return writeUserPathValue(k, newPath, valType, existed)
 }
 
 func (m *WindowsPathManager) setUserEnvVar(key, value string) error {
@@ -200,9 +240,12 @@ func (m *WindowsPathManager) cleanExternalFromKey(sdkType string, version string
 	}
 	defer k.Close()
 
-	currentPath, _, err := k.GetStringValue("Path")
+	currentPath, valType, existed, err := readUserPathValue(k)
 	if err != nil {
-		return nil
+		return err
+	}
+	if !existed {
+		return fmt.Errorf("no external paths removed")
 	}
 
 	svcDir := m.cfg.SvcDir()
@@ -253,7 +296,7 @@ func (m *WindowsPathManager) cleanExternalFromKey(sdkType string, version string
 	}
 
 	newPath := strings.Join(filtered, ";")
-	return k.SetStringValue("Path", newPath)
+	return writeUserPathValue(k, newPath, valType, existed)
 }
 
 func (m *WindowsPathManager) GetAllPathEntries() ([]PathEntry, error) {
