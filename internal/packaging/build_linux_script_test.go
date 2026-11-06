@@ -101,3 +101,46 @@ func TestBuildScriptsBashSyntax(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildLinuxScriptIconResizeAvoidsShellInterpolation pins the R-补 fix: the
+// hicolor icon resize must not interpolate shell variables into the Python
+// source. The old form embedded '$SRC_ICON'/($sz,$sz)/'$d/...' directly inside a
+// double-quoted `python3 -c "..."`, which breaks (or worse, allows injection) if
+// any path contains a quote. The program is now single-quoted (the shell leaves
+// it literal) and takes the path/size/destination as separate argv arguments,
+// matching the safe pattern in scripts/build-macos.sh.
+func TestBuildLinuxScriptIconResizeAvoidsShellInterpolation(t *testing.T) {
+	root := findRepoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "scripts", "build-linux.sh"))
+	if err != nil {
+		t.Fatalf("failed to read scripts/build-linux.sh: %v", err)
+	}
+	content := string(data)
+
+	want := []string{
+		// Program is single-quoted and reads its inputs from argv.
+		`python3 -c 'import sys`,
+		`sys.argv[1]`,
+		`sys.argv[3]`,
+		// Path/size/destination passed as separate, quoted argv arguments.
+		`"$SRC_ICON" "$sz" "$d/sdkversioncontrol.png"`,
+		// LANCZOS resampling fallback chain retained across Pillow versions.
+		`getattr(getattr(Image, "Resampling", Image), "LANCZOS", 1)`,
+	}
+	for _, w := range want {
+		if !strings.Contains(content, w) {
+			t.Errorf("scripts/build-linux.sh missing %q", w)
+		}
+	}
+
+	// Regression guards: the interpolated anti-patterns must be gone.
+	for _, bad := range []string{
+		`Image.open('$SRC_ICON')`,
+		`img.resize(($sz,$sz)`,
+		`.save('$d/sdkversioncontrol.png')`,
+	} {
+		if strings.Contains(content, bad) {
+			t.Errorf("scripts/build-linux.sh still interpolates shell vars into Python: %q", bad)
+		}
+	}
+}

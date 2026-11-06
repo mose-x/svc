@@ -94,7 +94,13 @@ SRC_ICON="build/desktop-icons/icon-white-bg.png"
 for sz in 16 32 48 64 128 256 512; do
   d="$STAGING/share/icons/hicolor/${sz}x${sz}/apps"
   mkdir -p "$d"
-  python3 -c "from PIL import Image; img=Image.open('$SRC_ICON'); res=getattr(getattr(Image,'Resampling',Image),'LANCZOS',1); img.resize(($sz,$sz),res).save('$d/sdkversioncontrol.png')"
+  # Pass the icon path, size, and destination as argv (never interpolate shell
+  # vars into the Python source): the program is single-quoted so the shell
+  # leaves it literal, matching the safe pattern in scripts/build-macos.sh.
+  # The LANCZOS getattr chain keeps the resampling filter working across Pillow
+  # versions (Resampling enum since 9.1, module constant before, int 1 fallback).
+  python3 -c 'import sys; from PIL import Image; src, size, dest = sys.argv[1], int(sys.argv[2]), sys.argv[3]; res = getattr(getattr(Image, "Resampling", Image), "LANCZOS", 1); Image.open(src).resize((size, size), res).save(dest)' \
+    "$SRC_ICON" "$sz" "$d/sdkversioncontrol.png"
 done
 
 fpm -s dir -t deb \
