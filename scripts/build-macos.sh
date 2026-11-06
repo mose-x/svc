@@ -67,8 +67,8 @@ ICONSET="$(mktemp -d)/icon.iconset"
 mkdir -p "$ICONSET"
 SRC="build/desktop-icons/icon-white-bg.png"
 for sz in 16 32 64 128 256 512; do
-  sips -z $sz $sz "$SRC" --out "$ICONSET/icon_${sz}x${sz}.png" >/dev/null
-  sips -z $((sz*2)) $((sz*2)) "$SRC" --out "$ICONSET/icon_${sz}x${sz}@2x.png" >/dev/null
+  sips -z "$sz" "$sz" "$SRC" --out "$ICONSET/icon_${sz}x${sz}.png" >/dev/null
+  sips -z "$((sz*2))" "$((sz*2))" "$SRC" --out "$ICONSET/icon_${sz}x${sz}@2x.png" >/dev/null
 done
 sips -z 1024 1024 "$SRC" --out "$ICONSET/icon_512x512@2x.png" >/dev/null
 ICNS="$(dirname "$ICONSET")/iconfile.icns"
