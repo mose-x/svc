@@ -572,8 +572,50 @@ func (s *Service) SwitchVersion(sdkTypeStr string, version string) error {
 		logger.Warn("Failed to refresh .svc.rc after switch: %v", err)
 	}
 
+	// Self-heal the extracted layout of the version just activated (see
+	// sdk.LayoutHealer). Best effort — the switch itself already succeeded.
+	s.healLayout(f, sdkTypeStr, version, versionDir)
+
 	logger.Info("Successfully switched %s to version %s", sdkTypeStr, version)
 	return nil
+}
+
+// healLayout runs the optional post-switch layout check for fetchers that
+// implement sdk.LayoutHealer and repairs whatever it reports. Versions
+// installed before a layout fix landed recover here instead of requiring a
+// reinstall. Never fails the switch: the version is already active and on
+// PATH, so problems are logged rather than returned.
+func (s *Service) healLayout(f sdk.VersionFetcher, sdkType string, version string, versionDir string) {
+	healer, ok := f.(sdk.LayoutHealer)
+	if !ok {
+		return
+	}
+
+	problems, err := healer.CheckLayout(versionDir)
+	if err != nil {
+		logger.Warn("Layout check failed for %s %s: %v", sdkType, version, err)
+		return
+	}
+	if len(problems) == 0 {
+		return
+	}
+
+	logger.Info("Repairing %s %s layout: %s", sdkType, version, strings.Join(problems, "; "))
+	if err := healer.RepairLayout(versionDir); err != nil {
+		logger.Warn("Layout repair failed for %s %s: %v", sdkType, version, err)
+		return
+	}
+
+	remaining, err := healer.CheckLayout(versionDir)
+	if err != nil {
+		logger.Warn("Post-repair layout check failed for %s %s: %v", sdkType, version, err)
+		return
+	}
+	if len(remaining) > 0 {
+		logger.Warn("Layout still incomplete for %s %s after repair: %s", sdkType, version, strings.Join(remaining, "; "))
+		return
+	}
+	logger.Info("Repaired %s %s layout", sdkType, version)
 }
 
 func (s *Service) GetSdkDownloadURL(sdkType string, version string) (string, error) {

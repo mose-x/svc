@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -371,8 +372,16 @@ func TestRustLinkComponentRuntime_MissingVersionDir(t *testing.T) {
 	}
 }
 
-func TestRustLinkComponentRuntime_Windows(t *testing.T) {
-	dir := t.TempDir()
+// rustWindowsRuntimeDLLs are the shared runtime files of the Windows Rust
+// tarball: the MSVC loader has no rpath, so each component needs them next to
+// its own .exe.
+var rustWindowsRuntimeDLLs = []string{"rustc_driver-9c6fabb71b9022ee.dll", "std-505ed9e40954533c.dll"}
+
+// buildRustWindowsVersionDir creates the Windows flavour of an extracted Rust
+// tarball: rustc/bin holds the runtime DLLs, every other component holds only
+// its .exe (which is what makes it fail to launch unpatched).
+func buildRustWindowsVersionDir(t *testing.T, dir string) {
+	t.Helper()
 	mkDir := func(parts ...string) string {
 		p := filepath.Join(append([]string{dir}, parts...)...)
 		if err := os.MkdirAll(p, 0755); err != nil {
@@ -380,18 +389,19 @@ func TestRustLinkComponentRuntime_Windows(t *testing.T) {
 		}
 		return p
 	}
+	write := func(p, content string) {
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
 
 	rustcBin := mkDir("rustc", "bin")
-	for _, name := range []string{"rustc_driver-9c6fabb71b9022ee.dll", "std-505ed9e40954533c.dll"} {
-		if err := os.WriteFile(filepath.Join(rustcBin, name), []byte(name), 0644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
+	for _, name := range rustWindowsRuntimeDLLs {
+		write(filepath.Join(rustcBin, name), name)
 	}
 	// Non-DLL neighbours must not be replicated.
 	for _, name := range []string{"rustc.exe", "rustc_driver-9c6fabb71b9022ee.pdb"} {
-		if err := os.WriteFile(filepath.Join(rustcBin, name), []byte(name), 0644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
+		write(filepath.Join(rustcBin, name), name)
 	}
 
 	for _, comp := range []struct{ dir, bin string }{
@@ -400,11 +410,13 @@ func TestRustLinkComponentRuntime_Windows(t *testing.T) {
 		{"clippy-preview", "clippy-driver.exe"},
 		{"rust-analyzer-preview", "rust-analyzer.exe"},
 	} {
-		binDir := mkDir(comp.dir, "bin")
-		if err := os.WriteFile(filepath.Join(binDir, comp.bin), []byte(comp.bin), 0644); err != nil {
-			t.Fatalf("write %s: %v", comp.bin, err)
-		}
+		write(filepath.Join(mkDir(comp.dir, "bin"), comp.bin), comp.bin)
 	}
+}
+
+func TestRustLinkComponentRuntime_Windows(t *testing.T) {
+	dir := t.TempDir()
+	buildRustWindowsVersionDir(t, dir)
 
 	f := &RustFetcher{}
 	if err := f.LinkComponentRuntime(dir, "windows"); err != nil {
@@ -412,7 +424,7 @@ func TestRustLinkComponentRuntime_Windows(t *testing.T) {
 	}
 
 	for _, comp := range []string{"cargo", "rustfmt-preview", "clippy-preview", "rust-analyzer-preview"} {
-		for _, dll := range []string{"rustc_driver-9c6fabb71b9022ee.dll", "std-505ed9e40954533c.dll"} {
+		for _, dll := range rustWindowsRuntimeDLLs {
 			got, err := os.ReadFile(filepath.Join(dir, comp, "bin", dll))
 			if err != nil {
 				t.Errorf("%s/bin/%s: expected the runtime DLL next to the exe: %v", comp, dll, err)
@@ -487,5 +499,307 @@ func TestRustMergeComponentsBridgesRuntime(t *testing.T) {
 		if _, err := os.Stat(link); err != nil {
 			t.Errorf("%s/lib/%s must resolve after MergeComponents: %v", comp, driver, err)
 		}
+	}
+}
+
+// --- LayoutHealer (post-switch self-heal) ---
+
+// SwitchVersion type-asserts sdk.LayoutHealer, so a signature drift here would
+// silently disable the self-heal instead of failing to compile.
+var _ LayoutHealer = (*RustFetcher)(nil)
+
+// runtimeProblemComps extracts the component names from the "<comp> cannot
+// resolve the rustc runtime (...)" problem format. Matching on the prefix
+// (rather than a substring search) keeps "rustc" itself out of the results:
+// every problem message mentions the rustc runtime.
+func runtimeProblemComps(problems []string) []string {
+	var comps []string
+	for _, p := range problems {
+		if comp, _, ok := strings.Cut(p, " cannot resolve the rustc runtime"); ok {
+			comps = append(comps, comp)
+		}
+	}
+	sort.Strings(comps)
+	return comps
+}
+
+// stdProblemComps extracts the component names from the "<comp>/lib/rustlib
+// missing (std not merged)" problem format.
+func stdProblemComps(problems []string) []string {
+	var comps []string
+	for _, p := range problems {
+		if comp, _, ok := strings.Cut(p, "/lib/rustlib missing (std not merged)"); ok {
+			comps = append(comps, comp)
+		}
+	}
+	sort.Strings(comps)
+	return comps
+}
+
+// rustToolComponents are the components of the fixtures above that ship
+// commands, i.e. everything componentBinDirs reports. Sorted, because
+// checkLayout walks os.ReadDir order and the helpers sort their result.
+var rustToolComponents = []string{"cargo", "clippy-preview", "rust-analyzer-preview", "rustfmt-preview"}
+
+func TestRustCheckLayout_Unix(t *testing.T) {
+	requireSymlinkSupport(t)
+	dir := t.TempDir()
+	buildRustVersionDir(t, dir, "darwin")
+
+	f := &RustFetcher{}
+	problems, err := f.checkLayout(dir, "darwin")
+	if err != nil {
+		t.Fatalf("checkLayout on a fresh extraction failed: %v", err)
+	}
+	if got := runtimeProblemComps(problems); !reflect.DeepEqual(got, rustToolComponents) {
+		t.Errorf("runtime problems for %v; want %v (full: %v)", got, rustToolComponents, problems)
+	}
+	// The fixture's rust-std-*/lib holds no rustlib/, so nothing to merge.
+	if got := stdProblemComps(problems); len(got) != 0 {
+		t.Errorf("unexpected std problems %v (full: %v)", got, problems)
+	}
+	// Checking is read-only: the repair must not have happened as a side effect.
+	if _, err := os.Lstat(filepath.Join(dir, "rustfmt-preview", "lib")); err == nil {
+		t.Error("checkLayout created rustfmt-preview/lib; the check must not repair")
+	}
+
+	if err := f.LinkComponentRuntime(dir, "darwin"); err != nil {
+		t.Fatalf("LinkComponentRuntime(darwin) failed: %v", err)
+	}
+	problems, err = f.checkLayout(dir, "darwin")
+	if err != nil {
+		t.Fatalf("checkLayout after the bridge failed: %v", err)
+	}
+	if len(problems) != 0 {
+		t.Errorf("layout still reported broken after the bridge: %v", problems)
+	}
+}
+
+func TestRustCheckLayout_LinuxUsesSoNames(t *testing.T) {
+	requireSymlinkSupport(t)
+	dir := t.TempDir()
+	buildRustVersionDir(t, dir, "linux")
+
+	f := &RustFetcher{}
+	if problems, err := f.checkLayout(dir, "linux"); err != nil {
+		t.Fatalf("checkLayout(linux) failed: %v", err)
+	} else if got := runtimeProblemComps(problems); !reflect.DeepEqual(got, rustToolComponents) {
+		t.Errorf("runtime problems for %v; want %v", got, rustToolComponents)
+	}
+
+	if err := f.LinkComponentRuntime(dir, "linux"); err != nil {
+		t.Fatalf("LinkComponentRuntime(linux) failed: %v", err)
+	}
+	if problems, err := f.checkLayout(dir, "linux"); err != nil || len(problems) != 0 {
+		t.Errorf("layout after the bridge = %v, %v; want no problems", problems, err)
+	}
+}
+
+func TestRustCheckLayout_Windows(t *testing.T) {
+	dir := t.TempDir()
+	buildRustWindowsVersionDir(t, dir)
+
+	f := &RustFetcher{}
+	problems, err := f.checkLayout(dir, "windows")
+	if err != nil {
+		t.Fatalf("checkLayout(windows) failed: %v", err)
+	}
+	if got := runtimeProblemComps(problems); !reflect.DeepEqual(got, rustToolComponents) {
+		t.Errorf("runtime problems for %v; want %v (full: %v)", got, rustToolComponents, problems)
+	}
+
+	if err := f.LinkComponentRuntime(dir, "windows"); err != nil {
+		t.Fatalf("LinkComponentRuntime(windows) failed: %v", err)
+	}
+	if problems, err := f.checkLayout(dir, "windows"); err != nil || len(problems) != 0 {
+		t.Errorf("layout after the bridge = %v, %v; want no problems", problems, err)
+	}
+
+	// A DLL removed by hand (or by an antivirus) is a problem again.
+	if err := os.Remove(filepath.Join(dir, "clippy-preview", "bin", rustWindowsRuntimeDLLs[0])); err != nil {
+		t.Fatalf("remove bridged DLL: %v", err)
+	}
+	problems, err = f.checkLayout(dir, "windows")
+	if err != nil {
+		t.Fatalf("checkLayout after removing a DLL failed: %v", err)
+	}
+	if got := runtimeProblemComps(problems); !reflect.DeepEqual(got, []string{"clippy-preview"}) {
+		t.Errorf("runtime problems for %v; want [clippy-preview]", got)
+	}
+}
+
+func TestRustCheckLayout_StdNotMerged(t *testing.T) {
+	dir := t.TempDir()
+	mkDir := func(parts ...string) string {
+		p := filepath.Join(append([]string{dir}, parts...)...)
+		if err := os.MkdirAll(p, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", p, err)
+		}
+		return p
+	}
+	stdLib := mkDir("rust-std-x86_64-apple-darwin", "lib", "rustlib", "x86_64-apple-darwin", "lib")
+	if err := os.WriteFile(filepath.Join(stdLib, "libstd.rlib"), []byte("std"), 0644); err != nil {
+		t.Fatalf("write libstd: %v", err)
+	}
+	// No shared runtime in rustc/lib, so only the std merge is under test.
+	mkDir("rustc", "bin")
+	mkDir("rustfmt-preview", "bin")
+
+	f := &RustFetcher{}
+	problems, err := f.checkLayout(dir, "darwin")
+	if err != nil {
+		t.Fatalf("checkLayout failed: %v", err)
+	}
+	want := []string{"cargo", "rustc"}
+	if got := stdProblemComps(problems); !reflect.DeepEqual(got, want) {
+		t.Errorf("std problems for %v; want %v (full: %v)", got, want, problems)
+	}
+	if got := runtimeProblemComps(problems); len(got) != 0 {
+		t.Errorf("unexpected runtime problems %v", got)
+	}
+
+	if err := f.MergeComponents(dir); err != nil {
+		t.Fatalf("MergeComponents failed: %v", err)
+	}
+	if problems, err := f.checkLayout(dir, "darwin"); err != nil || len(problems) != 0 {
+		t.Errorf("layout after the merge = %v, %v; want no problems", problems, err)
+	}
+	for _, comp := range want {
+		p := filepath.Join(dir, comp, "lib", "rustlib", "x86_64-apple-darwin", "lib", "libstd.rlib")
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s: %v", p, err)
+		}
+	}
+}
+
+func TestRustCheckLayout_NoRuntimeIsClean(t *testing.T) {
+	f := &RustFetcher{}
+
+	t.Run("no rustc component", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "rustfmt-preview", "bin"), 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		for _, goos := range []string{"darwin", "linux", "windows"} {
+			problems, err := f.checkLayout(dir, goos)
+			if err != nil || len(problems) != 0 {
+				t.Errorf("checkLayout(%s) = %v, %v; want no problems", goos, problems, err)
+			}
+		}
+		if _, err := os.Lstat(filepath.Join(dir, "rustfmt-preview", "lib")); err == nil {
+			t.Error("checkLayout created a lib dir with nothing to bridge")
+		}
+	})
+
+	t.Run("missing version dir", func(t *testing.T) {
+		// SwitchVersion stats the version dir before healing, so a missing dir
+		// reports "nothing to do" rather than an error.
+		missing := filepath.Join(t.TempDir(), "nope")
+		for _, goos := range []string{"darwin", "windows"} {
+			problems, err := f.checkLayout(missing, goos)
+			if err != nil || len(problems) != 0 {
+				t.Errorf("checkLayout(%s) = %v, %v; want no problems", goos, problems, err)
+			}
+		}
+	})
+
+	t.Run("unreadable runtime dir", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "rustc"), 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		// rustc/lib as a regular file: ReadDir fails with ENOTDIR on Unix and
+		// with a "not found" error on Windows, which the absent-component
+		// short-circuit would otherwise swallow. Either way the check must
+		// surface an error instead of claiming a healthy layout it could not
+		// inspect.
+		if err := os.WriteFile(filepath.Join(dir, "rustc", "lib"), []byte("x"), 0644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		if _, err := f.checkLayout(dir, "darwin"); err == nil {
+			t.Error("checkLayout must fail when rustc/lib cannot be read")
+		}
+		// The same guarantee holds for the repair path.
+		if err := f.LinkComponentRuntime(dir, "darwin"); err == nil {
+			t.Error("LinkComponentRuntime must fail when rustc/lib cannot be read")
+		}
+	})
+}
+
+// TestRustLayoutHealer covers the exported sdk.LayoutHealer pair on the host
+// GOOS, which is what SwitchVersion drives: a freshly extracted (i.e. broken)
+// version is reported, repaired in place, and then reported clean. RepairLayout
+// must also be a no-op on an already healthy version, because SwitchVersion
+// heals every switch, not just broken ones.
+func TestRustLayoutHealer(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		requireSymlinkSupport(t)
+	}
+	dir := t.TempDir()
+	mkDir := func(parts ...string) string {
+		p := filepath.Join(append([]string{dir}, parts...)...)
+		if err := os.MkdirAll(p, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", p, err)
+		}
+		return p
+	}
+	write := func(p, content string) {
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+
+	write(filepath.Join(mkDir("rust-std-x86_64-apple-darwin", "lib", "rustlib", "x86_64-apple-darwin", "lib"), "libstd.rlib"), "std")
+
+	exe := "rustfmt"
+	runtimeName := rustSharedLibName(runtime.GOOS)
+	runtimeDir := mkDir("rustc", "lib")
+	if runtime.GOOS == "windows" {
+		exe = "rustfmt.exe"
+		runtimeName = rustWindowsRuntimeDLLs[0]
+		runtimeDir = mkDir("rustc", "bin")
+	}
+	write(filepath.Join(runtimeDir, runtimeName), "driver")
+	write(filepath.Join(mkDir("rustfmt-preview", "bin"), exe), "rustfmt")
+
+	f := &RustFetcher{}
+	problems, err := f.CheckLayout(dir)
+	if err != nil {
+		t.Fatalf("CheckLayout failed: %v", err)
+	}
+	if len(stdProblemComps(problems)) == 0 {
+		t.Errorf("expected the unmerged std to be reported, got %v", problems)
+	}
+	if len(runtimeProblemComps(problems)) == 0 {
+		t.Errorf("expected the missing runtime bridge to be reported, got %v", problems)
+	}
+
+	if err := f.RepairLayout(dir); err != nil {
+		t.Fatalf("RepairLayout failed: %v", err)
+	}
+	if problems, err := f.CheckLayout(dir); err != nil || len(problems) != 0 {
+		t.Fatalf("layout after RepairLayout = %v, %v; want no problems", problems, err)
+	}
+
+	for _, comp := range []string{"cargo", "rustc"} {
+		p := filepath.Join(dir, comp, "lib", "rustlib", "x86_64-apple-darwin", "lib", "libstd.rlib")
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s: %v", p, err)
+		}
+	}
+	bridged := filepath.Join(dir, "rustfmt-preview", "lib", runtimeName)
+	if runtime.GOOS == "windows" {
+		bridged = filepath.Join(dir, "rustfmt-preview", "bin", runtimeName)
+	}
+	if _, err := os.Stat(bridged); err != nil {
+		t.Errorf("%s must exist after RepairLayout: %v", bridged, err)
+	}
+
+	// Idempotent: healing a healthy version changes nothing and stays clean.
+	if err := f.RepairLayout(dir); err != nil {
+		t.Fatalf("second RepairLayout failed: %v", err)
+	}
+	if problems, err := f.CheckLayout(dir); err != nil || len(problems) != 0 {
+		t.Errorf("layout after a second repair = %v, %v; want no problems", problems, err)
 	}
 }
