@@ -339,3 +339,110 @@ func TestSwitchVersionHealIsBestEffort(t *testing.T) {
 		})
 	}
 }
+
+// --- startup heal of the active versions ---
+
+// TestHealActiveVersionsHealsOnlyActive covers the startup pass: the active
+// version is checked and repaired, every other installed version of the same SDK
+// is left alone (healing them all would touch trees the user is not running).
+func TestHealActiveVersionsHealsOnlyActive(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		requireSymlinkSupport(t)
+	}
+	svc, cfg := newHealTestService(t, &stubPathManager{})
+
+	activeDir := cfg.SdkVersionDir("rust", "1.93.0")
+	runtimeName := buildBrokenRustVersionDir(t, activeDir)
+	inactiveDir := cfg.SdkVersionDir("rust", "1.92.0")
+	buildBrokenRustVersionDir(t, inactiveDir)
+	if err := cfg.SetActiveVersion("rust", "1.93.0"); err != nil {
+		t.Fatal(err)
+	}
+
+	svc.HealActiveVersions()
+
+	healer := svc.registry.Get(sdk.Rust).(sdk.LayoutHealer)
+	if problems, err := healer.CheckLayout(activeDir); err != nil || len(problems) != 0 {
+		t.Errorf("active version = %v, %v; want no problems", problems, err)
+	}
+	if _, err := os.Stat(rustRuntimeLocation(activeDir, "rustfmt-preview", runtimeName)); err != nil {
+		t.Errorf("the runtime bridge of the active version is missing: %v", err)
+	}
+	// The std merge is what makes `cargo build` work, so it has to reach rustc's
+	// own sysroot even though rustc/lib/rustlib already exists.
+	stdLib := filepath.Join(activeDir, "rustc", "lib", "rustlib", "x86_64-apple-darwin", "lib", "libstd.rlib")
+	if _, err := os.Stat(stdLib); err != nil {
+		t.Errorf("%s must exist after the heal: %v", stdLib, err)
+	}
+
+	if problems, err := healer.CheckLayout(inactiveDir); err != nil || len(problems) == 0 {
+		t.Errorf("inactive version = %v, %v; want it left broken", problems, err)
+	}
+}
+
+func TestHealActiveVersionsSkips(t *testing.T) {
+	t.Run("no active version", func(t *testing.T) {
+		svc, cfg := newHealTestService(t, &stubPathManager{})
+		dir := cfg.SdkVersionDir("rust", "1.93.0")
+		buildBrokenRustVersionDir(t, dir)
+
+		svc.HealActiveVersions()
+
+		healer := svc.registry.Get(sdk.Rust).(sdk.LayoutHealer)
+		if problems, err := healer.CheckLayout(dir); err != nil || len(problems) == 0 {
+			t.Errorf("an installed but inactive version must not be healed: %v, %v", problems, err)
+		}
+	})
+
+	t.Run("active version dir is gone", func(t *testing.T) {
+		svc, cfg := newHealTestService(t, &stubPathManager{})
+		if err := cfg.SetActiveVersion("rust", "1.93.0"); err != nil {
+			t.Fatal(err)
+		}
+		// A version recorded in config.json but not installed is a normal state
+		// (the dir was deleted behind svc's back): the pass must skip it instead
+		// of recreating anything. config.init already creates <svcDir>/<sdk>.
+		svc.HealActiveVersions()
+		if _, err := os.Lstat(cfg.SdkVersionDir("rust", "1.93.0")); err == nil {
+			t.Error("healing a missing version dir recreated it")
+		}
+	})
+
+	t.Run("non-healer sdk", func(t *testing.T) {
+		svc, cfg := newHealTestService(t, &stubPathManager{})
+		dir := cfg.SdkVersionDir("go", "1.25.0")
+		if err := os.MkdirAll(filepath.Join(dir, "bin"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := cfg.SetActiveVersion("go", "1.25.0"); err != nil {
+			t.Fatal(err)
+		}
+
+		svc.HealActiveVersions()
+
+		if entries := versionTreeEntries(t, dir); !reflect.DeepEqual(entries, []string{"bin"}) {
+			t.Errorf("a non-healer version dir changed: %v", entries)
+		}
+	})
+
+	t.Run("invalid active version", func(t *testing.T) {
+		svc, cfg := newHealTestService(t, &stubPathManager{})
+		healer := &stubHealer{problems: []string{"broken"}}
+		svc.registry.Register(healer)
+		// config.json is user-editable: without validation this would heal the
+		// SVC dir itself ("rust/.." resolves to it).
+		if err := cfg.SetActiveVersion("ruby", ".."); err != nil {
+			t.Fatal(err)
+		}
+
+		svc.HealActiveVersions()
+
+		if healer.checkCalls != 0 {
+			t.Errorf("CheckLayout ran %d times for an invalid active version; want 0", healer.checkCalls)
+		}
+	})
+
+	t.Run("uninitialized service", func(t *testing.T) {
+		New(nil, nil, nil, nil, nil, nil, nil, nil).HealActiveVersions()
+	})
+}

@@ -618,6 +618,40 @@ func (s *Service) healLayout(f sdk.VersionFetcher, sdkType string, version strin
 	logger.Info("Repaired %s %s layout", sdkType, version)
 }
 
+// HealActiveVersions checks the layout of every SDK's active version and repairs
+// what it finds. Called once at startup, so a version installed by an older
+// build — or damaged afterwards — becomes usable again without a reinstall and
+// without the user having to switch versions. Only fetchers implementing
+// sdk.LayoutHealer are inspected and only the active version of each, so the
+// pass costs a handful of directory reads. Best effort, like healLayout:
+// problems are logged, never returned.
+func (s *Service) HealActiveVersions() {
+	if s.registry == nil || s.cfg == nil {
+		return
+	}
+	for _, f := range s.registry.All() {
+		if _, ok := f.(sdk.LayoutHealer); !ok {
+			continue
+		}
+		sdkType := string(f.Type())
+		version := s.cfg.GetActiveVersion(sdkType)
+		if version == "" {
+			continue
+		}
+		// config.json is user-editable, so the recorded version is treated as
+		// untrusted input: without this a ".." entry would heal the SVC dir.
+		if err := helpers.ValidatePathSegment(version); err != nil {
+			logger.Warn("Skipping layout heal for %s: invalid active version: %v", sdkType, err)
+			continue
+		}
+		versionDir := s.cfg.SdkVersionDir(sdkType, version)
+		if _, err := os.Stat(versionDir); err != nil {
+			continue // recorded but not (or no longer) installed: nothing to heal
+		}
+		s.healLayout(f, sdkType, version, versionDir)
+	}
+}
+
 func (s *Service) GetSdkDownloadURL(sdkType string, version string) (string, error) {
 	if s.registry == nil {
 		return "", apperr.New(apperr.AppNotInitialized, nil)
