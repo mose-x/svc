@@ -277,7 +277,9 @@ func componentBinDirs(versionDir string) ([]string, error) {
 // the file names sibling components need from it: rustc/bin/*.dll on Windows
 // (the loader searches the .exe's own directory), rustc/lib/*.{dylib,so} on
 // Unix (resolved through the @loader_path/../lib / $ORIGIN/../lib rpath). A
-// missing rustc component yields no names and no error.
+// missing rustc component yields no names and no error; a runtime dir that
+// exists but cannot be read is an error, so a corrupt layout is never reported
+// as healthy.
 func rustRuntimeFiles(versionDir string, goos string) (string, []string, error) {
 	dir := filepath.Join(versionDir, "rustc", "lib")
 	if goos == "windows" {
@@ -286,6 +288,12 @@ func rustRuntimeFiles(versionDir string, goos string) (string, []string, error) 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// Windows also reports "not found" when the path exists but is a
+			// regular file, so stat it before treating the component as absent
+			// — Unix already fails this read with ENOTDIR.
+			if info, statErr := os.Lstat(dir); statErr == nil && !info.IsDir() {
+				return dir, nil, fmt.Errorf("%s is not a directory", dir)
+			}
 			return dir, nil, nil
 		}
 		return dir, nil, fmt.Errorf("failed to read %s: %w", dir, err)

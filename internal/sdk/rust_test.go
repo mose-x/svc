@@ -708,14 +708,20 @@ func TestRustCheckLayout_NoRuntimeIsClean(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(dir, "rustc"), 0755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
-		// rustc/lib as a regular file: ReadDir fails with ENOTDIR (not
-		// IsNotExist), so the check surfaces the error instead of claiming a
-		// healthy layout it could not inspect.
+		// rustc/lib as a regular file: ReadDir fails with ENOTDIR on Unix and
+		// with a "not found" error on Windows, which the absent-component
+		// short-circuit would otherwise swallow. Either way the check must
+		// surface an error instead of claiming a healthy layout it could not
+		// inspect.
 		if err := os.WriteFile(filepath.Join(dir, "rustc", "lib"), []byte("x"), 0644); err != nil {
 			t.Fatalf("write: %v", err)
 		}
 		if _, err := f.checkLayout(dir, "darwin"); err == nil {
 			t.Error("checkLayout must fail when rustc/lib cannot be read")
+		}
+		// The same guarantee holds for the repair path.
+		if err := f.LinkComponentRuntime(dir, "darwin"); err == nil {
+			t.Error("LinkComponentRuntime must fail when rustc/lib cannot be read")
 		}
 	})
 }
