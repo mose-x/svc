@@ -160,6 +160,12 @@ func (a *App) startup(ctx context.Context) {
 	// without a reinstall and without the user switching versions.
 	a.installerSvc.HealActiveVersions()
 
+	// Refresh the shims of any SDK whose recorded bin dirs / env vars no longer
+	// match its fetcher, so a component added in a later release reaches PATH
+	// without the user having to switch versions. Runs after the layout heal so
+	// the tree being shimmed is the repaired one.
+	a.installerSvc.RefreshStaleShims()
+
 	// Clean up temp directory
 	if entries, err := os.ReadDir(a.cfg.TmpDir()); err == nil && len(entries) > 0 {
 		logger.Info("Cleaning up %d temporary files from previous run", len(entries))
