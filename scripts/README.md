@@ -197,6 +197,10 @@ Rust 的 sysroot(`lib/rustlib`)在兄弟目录(`rust-std-{target}/`),不在 `car
 The Rust tarball keeps one directory per component, so the tools outside `rustc/` cannot resolve rustc's shared runtime. SVC bridges it during install (`LinkComponentRuntime`: symlinks into `<component>/lib` on Unix, hardlinks of `rustc/bin/*.dll` on Windows), and re-checks the layout at every startup and after every version switch — versions installed before the fix are repaired instead of needing a reinstall.
 Rust 压缩包按组件分目录,`rustc/` 之外的工具找不到 rustc 的共享运行时。SVC 在安装时就会桥接(`LinkComponentRuntime`:Unix 软链到 `<component>/lib`,Windows 把 `rustc/bin/*.dll` 硬链过去),并在每次启动和每次切换版本后重新检查布局——修复前安装的版本会自动修好,无需重装。
 
+### A command has no shim after an upgrade (e.g. `rust-analyzer`)
+`shims.json` records the bin dirs as they were at install/switch time, so a component added to an SDK in a later release never reaches PATH. SVC compares the recorded bin dirs and env vars against the fetcher at every startup and re-runs the shim configuration for anything stale, so the new commands appear after a restart — no version switch needed.
+`shims.json` 里记的是安装/切换当时的 bin 目录,所以后续版本给某个 SDK 新增的组件不会自动进 PATH。SVC 每次启动都会把记录的 binDirs/envVars 和 fetcher 当前的对比,过时就重新生成 shim,重启后新命令即可用,不需要切版本。
+
 ### macOS app "damaged" after install
 See the [macOS first-launch fix](#macos-first-launch-fix--macos-首次启动修复) section above.
 见上面的 [macOS 首次启动修复](#macos-first-launch-fix--macos-首次启动修复) 章节。
