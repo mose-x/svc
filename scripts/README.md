@@ -193,6 +193,10 @@ code-hooks 的 `commit-msg` 钩子用 `python3 -c`。SVC 的 Python shim 只有 
 Rust's sysroot (`lib/rustlib`) is in a sibling directory (`rust-std-{target}/`), not under `cargo/` or `rustc/`. SVC's `MergeComponents` merges it automatically (PR #61). If still failing, ensure you're running a recent build.
 Rust 的 sysroot(`lib/rustlib`)在兄弟目录(`rust-std-{target}/`),不在 `cargo/` 或 `rustc/` 下。SVC 的 `MergeComponents` 会自动合并(PR #61)。如果还失败,确保跑的是最新构建。
 
+### `rustfmt` / `clippy-driver` fail to start (missing `librustc_driver`)
+The Rust tarball keeps one directory per component, so the tools outside `rustc/` cannot resolve rustc's shared runtime. SVC bridges it during install (`LinkComponentRuntime`: symlinks into `<component>/lib` on Unix, hardlinks of `rustc/bin/*.dll` on Windows), and re-checks the layout after every version switch — versions installed before the fix are repaired on the next switch instead of needing a reinstall.
+Rust 压缩包按组件分目录,`rustc/` 之外的工具找不到 rustc 的共享运行时。SVC 在安装时就会桥接(`LinkComponentRuntime`:Unix 软链到 `<component>/lib`,Windows 把 `rustc/bin/*.dll` 硬链过去),并在每次切换版本后重新检查布局——修复前安装的版本会在下一次切换时自动修好,无需重装。
+
 ### macOS app "damaged" after install
 See the [macOS first-launch fix](#macos-first-launch-fix--macos-首次启动修复) section above.
 见上面的 [macOS 首次启动修复](#macos-first-launch-fix--macos-首次启动修复) 章节。
