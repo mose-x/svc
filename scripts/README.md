@@ -190,12 +190,12 @@ The code-hooks `commit-msg` hook uses `python3 -c`. SVC's Python shim only provi
 code-hooks 的 `commit-msg` 钩子用 `python3 -c`。SVC 的 Python shim 只有 `python`(Windows CPython 没有 `python3.exe`)。SVC 现在自己创建 `python3` alias(PR #69/#71)。如果钩子还失败,编译一个 `python3.exe` wrapper(见 `note/` 或 AGENTS.md)。
 
 ### `cargo build` fails after installing Rust (sysroot issue)
-Rust's sysroot (`lib/rustlib`) is in a sibling directory (`rust-std-{target}/`), not under `cargo/` or `rustc/`. SVC's `MergeComponents` merges it automatically (PR #61). If still failing, ensure you're running a recent build.
-Rust 的 sysroot(`lib/rustlib`)在兄弟目录(`rust-std-{target}/`),不在 `cargo/` 或 `rustc/` 下。SVC 的 `MergeComponents` 会自动合并(PR #61)。如果还失败,确保跑的是最新构建。
+Rust's sysroot (`lib/rustlib`) is in a sibling directory (`rust-std-{target}/`), not under `cargo/` or `rustc/`. SVC's `MergeComponents` merges it automatically, per `{target}/lib` — the `rustc` component ships its own `lib/rustlib/` (holding `etc/` and `{target}/bin/`), which must not be mistaken for an already-merged std. The layout is re-checked at every startup and after every version switch, so an install left broken by an older build repairs itself.
+Rust 的 sysroot(`lib/rustlib`)在兄弟目录(`rust-std-{target}/`),不在 `cargo/` 或 `rustc/` 下。SVC 的 `MergeComponents` 会自动合并,粒度是 `{target}/lib`——`rustc` 组件自带 `lib/rustlib/`(里面是 `etc/` 和 `{target}/bin/`),不能当成 std 已合并。每次启动和每次切换版本后都会重新检查布局,旧版本装坏的会自己修好。
 
 ### `rustfmt` / `clippy-driver` fail to start (missing `librustc_driver`)
-The Rust tarball keeps one directory per component, so the tools outside `rustc/` cannot resolve rustc's shared runtime. SVC bridges it during install (`LinkComponentRuntime`: symlinks into `<component>/lib` on Unix, hardlinks of `rustc/bin/*.dll` on Windows), and re-checks the layout after every version switch — versions installed before the fix are repaired on the next switch instead of needing a reinstall.
-Rust 压缩包按组件分目录,`rustc/` 之外的工具找不到 rustc 的共享运行时。SVC 在安装时就会桥接(`LinkComponentRuntime`:Unix 软链到 `<component>/lib`,Windows 把 `rustc/bin/*.dll` 硬链过去),并在每次切换版本后重新检查布局——修复前安装的版本会在下一次切换时自动修好,无需重装。
+The Rust tarball keeps one directory per component, so the tools outside `rustc/` cannot resolve rustc's shared runtime. SVC bridges it during install (`LinkComponentRuntime`: symlinks into `<component>/lib` on Unix, hardlinks of `rustc/bin/*.dll` on Windows), and re-checks the layout at every startup and after every version switch — versions installed before the fix are repaired instead of needing a reinstall.
+Rust 压缩包按组件分目录,`rustc/` 之外的工具找不到 rustc 的共享运行时。SVC 在安装时就会桥接(`LinkComponentRuntime`:Unix 软链到 `<component>/lib`,Windows 把 `rustc/bin/*.dll` 硬链过去),并在每次启动和每次切换版本后重新检查布局——修复前安装的版本会自动修好,无需重装。
 
 ### macOS app "damaged" after install
 See the [macOS first-launch fix](#macos-first-launch-fix--macos-首次启动修复) section above.
