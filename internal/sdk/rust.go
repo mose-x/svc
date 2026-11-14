@@ -98,9 +98,9 @@ func (f *RustFetcher) VerifyCommand() (string, []string) {
 // MergeComponents repairs the per-component layout of the extracted Rust
 // tarball so every binary can find what it links against:
 //
-//  1. rust-std-{target}/lib/rustlib/ is copied into cargo/lib/ and rustc/lib/
-//     so rustc and cargo find the std library at their sysroot
-//     (dirname(dirname(exe)) = component dir root, which now holds lib/rustlib/).
+//  1. rust-std-{target}/lib/rustlib/{target}/lib/ is made reachable from
+//     cargo/lib/rustlib/ and rustc/lib/rustlib/ so rustc finds the std library
+//     at its sysroot (dirname(dirname(exe)) = component dir root).
 //  2. rustc's shared runtime is bridged into the sibling components
 //     (LinkComponentRuntime) so rustfmt, clippy-driver and rust-analyzer can
 //     load librustc_driver.
@@ -108,27 +108,25 @@ func (f *RustFetcher) VerifyCommand() (string, []string) {
 // The Rust tarball ships per-component directories (cargo/, rustc/,
 // rustfmt-preview/, rust-std-{target}/) as siblings. Without this merge,
 // rustc at rustc/bin/rustc computes sysroot=rustc/ but std is at
-// rust-std-{target}/lib/rustlib/ — a sibling, not under rustc/.
+// rust-std-{target}/lib/rustlib/ — a sibling, not under rustc/. Every compile
+// then dies with E0463 "can't find crate for `std`".
 func (f *RustFetcher) MergeComponents(versionDir string) error {
+	return f.mergeComponents(versionDir, runtime.GOOS)
+}
+
+// mergeComponents is the goos-parameterised core of MergeComponents so tests can
+// assert the Unix (symlink) and Windows (copy) std placement on any host.
+func (f *RustFetcher) mergeComponents(versionDir string, goos string) error {
 	if _, err := os.ReadDir(versionDir); err != nil {
 		return fmt.Errorf("failed to read version dir: %w", err)
 	}
 
 	if srcRustlib := findStdRustlib(versionDir); srcRustlib != "" {
-		for _, comp := range []string{"cargo", "rustc"} {
-			dstRustlib := filepath.Join(versionDir, comp, "lib", "rustlib")
-			if _, err := os.Stat(dstRustlib); err == nil {
-				continue
-			}
-			if err := os.MkdirAll(filepath.Dir(dstRustlib), 0755); err != nil {
-				return err
-			}
-			if err := fsutil.CopyDir(srcRustlib, dstRustlib); err != nil {
-				return fmt.Errorf("failed to copy rustlib to %s: %w", comp, err)
-			}
+		if err := mergeStdRustlib(versionDir, srcRustlib, goos); err != nil {
+			return err
 		}
 	}
-	return f.LinkComponentRuntime(versionDir, runtime.GOOS)
+	return f.LinkComponentRuntime(versionDir, goos)
 }
 
 // CheckLayout reports the layout problems of an installed version that
@@ -153,11 +151,19 @@ func (f *RustFetcher) RepairLayout(versionDir string) error {
 func (f *RustFetcher) checkLayout(versionDir string, goos string) ([]string, error) {
 	var problems []string
 
-	// std must be reachable from both sysroots (MergeComponents step 1).
-	if findStdRustlib(versionDir) != "" {
-		for _, comp := range []string{"cargo", "rustc"} {
-			if _, err := os.Stat(filepath.Join(versionDir, comp, "lib", "rustlib")); err != nil {
-				problems = append(problems, fmt.Sprintf("%s/lib/rustlib missing (std not merged)", comp))
+	// std must be reachable from both sysroots (MergeComponents step 1), at the
+	// same {target}/lib granularity the merge uses: rustc ships its own
+	// lib/rustlib/, so that directory existing says nothing about std.
+	if srcRustlib := findStdRustlib(versionDir); srcRustlib != "" {
+		targets, err := stdRustlibTargets(srcRustlib)
+		if err != nil {
+			return nil, err
+		}
+		for _, comp := range stdComponents {
+			for _, target := range targets {
+				if _, err := os.Stat(stdLibDir(versionDir, comp, target)); err != nil {
+					problems = append(problems, fmt.Sprintf("%s/lib/rustlib/%s/lib missing (std not merged)", comp, target))
+				}
 			}
 		}
 	}
@@ -206,6 +212,90 @@ func findStdRustlib(versionDir string) string {
 		}
 	}
 	return ""
+}
+
+// stdComponents are the components whose sysroot must be able to resolve std.
+// rustc is the one that matters (it compiles against
+// {sysroot}/lib/rustlib/{target}/lib); cargo is merged too so both sysroots
+// match rustup's single merged prefix.
+var stdComponents = []string{"cargo", "rustc"}
+
+// stdLibDir returns the directory a component's sysroot resolves the std rlibs
+// of one target from.
+func stdLibDir(versionDir string, comp string, target string) string {
+	return filepath.Join(versionDir, comp, "lib", "rustlib", target, "lib")
+}
+
+// mergeStdRustlib makes the std library of every target shipped in srcRustlib
+// reachable from each sysroot in stdComponents.
+//
+// The merge is per {target}/lib, NOT per lib/rustlib: the rustc component ships
+// its own lib/rustlib/ (holding etc/ and {target}/bin/), so a "skip when
+// lib/rustlib already exists" test never merges anything into rustc/ and every
+// compile fails with E0463 "can't find crate for `std`". Only the leaf that is
+// actually missing is placed, which also leaves a copy made by an older build
+// untouched.
+func mergeStdRustlib(versionDir string, srcRustlib string, goos string) error {
+	targets, err := stdRustlibTargets(srcRustlib)
+	if err != nil {
+		return err
+	}
+	for _, comp := range stdComponents {
+		for _, target := range targets {
+			src := filepath.Join(srcRustlib, target, "lib")
+			if err := placeStdLib(src, stdLibDir(versionDir, comp, target), goos); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// stdRustlibTargets returns the target triples of srcRustlib that actually ship
+// a lib/ directory of rlibs, ignoring the installer metadata files and the
+// {target}/bin/ helper dir that sit alongside them.
+func stdRustlibTargets(srcRustlib string) ([]string, error) {
+	entries, err := os.ReadDir(srcRustlib)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s: %w", srcRustlib, err)
+	}
+	var targets []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if info, err := os.Stat(filepath.Join(srcRustlib, entry.Name(), "lib")); err != nil || !info.IsDir() {
+			continue
+		}
+		targets = append(targets, entry.Name())
+	}
+	return targets, nil
+}
+
+// placeStdLib makes the std rlibs at src reachable at dst: a relative symlink on
+// Unix, a copy on Windows where creating a symlink needs a privilege the app
+// does not have. Symlinking keeps one ~140 MB std tree per version instead of
+// three, is relative so the version dir stays relocatable, and falls back to a
+// copy where symlinks are unavailable. An existing dst is left untouched, so
+// repeated runs are no-ops.
+func placeStdLib(src string, dst string, goos string) error {
+	if _, err := os.Lstat(dst); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	if goos != "windows" {
+		if rel, err := filepath.Rel(filepath.Dir(dst), src); err == nil {
+			if err := os.Symlink(rel, dst); err == nil {
+				return nil
+			}
+		}
+	}
+	if err := fsutil.CopyDir(src, dst); err != nil {
+		return fmt.Errorf("failed to place std lib at %s: %w", dst, err)
+	}
+	return nil
 }
 
 // LinkComponentRuntime bridges rustc's shared runtime into the sibling

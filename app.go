@@ -154,6 +154,12 @@ func (a *App) startup(ctx context.Context) {
 		logger.Warn("Shim setup failed (run 'svc init' to retry): %v", err)
 	}
 
+	// Self-heal the extracted layout of every active SDK version (see
+	// sdk.LayoutHealer). A version installed before a layout fix landed — Rust's
+	// per-component tarball is the case in point — becomes usable again here,
+	// without a reinstall and without the user switching versions.
+	a.installerSvc.HealActiveVersions()
+
 	// Clean up temp directory
 	if entries, err := os.ReadDir(a.cfg.TmpDir()); err == nil && len(entries) > 0 {
 		logger.Info("Cleaning up %d temporary files from previous run", len(entries))
