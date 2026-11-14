@@ -111,9 +111,31 @@ func (f *PerlFetcher) fetchWindowsVersions() ([]VersionInfo, error) {
 		return nil, fmt.Errorf("failed to parse Perl version data: %w", err)
 	}
 
+	versions := perlWindowsVersions(releases)
+	for i := range versions {
+		versions[i].DownloadURL = f.useEndpoint(versions[i].DownloadURL)
+	}
+	return versions, nil
+}
+
+// isPerlPortableArchive reports whether url points at a Strawberry Perl
+// portable archive that svc can actually extract. releases.json labels the
+// edition "portable", but not every entry is one: 5.40.5.1 ships an .msi
+// installer in that field, which the extractor rejects with "unsupported
+// archive format" — listing it guarantees a failed install on Windows.
+// Empty URLs (releases with no portable edition) are rejected as before, and
+// the -PDL.zip variants are genuine portable builds so they stay.
+func isPerlPortableArchive(url string) bool {
+	return strings.HasSuffix(strings.ToLower(url), ".zip")
+}
+
+// perlWindowsVersions turns a releases.json payload into the installable
+// version list, newest first. Pure (no HTTP, no endpoint mirroring) so tests
+// can feed it the payload shapes the upstream feed actually produces.
+func perlWindowsVersions(releases []strawberryRelease) []VersionInfo {
 	var versions []VersionInfo
 	for _, r := range releases {
-		if r.Edition.Portable.URL == "" {
+		if !isPerlPortableArchive(r.Edition.Portable.URL) {
 			continue
 		}
 		ver := r.Version
@@ -129,13 +151,13 @@ func (f *PerlFetcher) fetchWindowsVersions() ([]VersionInfo, error) {
 			Version:     ver,
 			Major:       major,
 			ReleaseDate: r.Date,
-			DownloadURL: f.useEndpoint(r.Edition.Portable.URL),
+			DownloadURL: r.Edition.Portable.URL,
 			FileName:    fileName,
 		})
 	}
 
 	sort.Slice(versions, func(i, j int) bool { return CompareVersions(versions[i].Version, versions[j].Version) > 0 })
-	return versions, nil
+	return versions
 }
 
 // ----- Unix: skaji/relocatable-perl -----
