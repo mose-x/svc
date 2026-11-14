@@ -523,12 +523,17 @@ func runtimeProblemComps(problems []string) []string {
 	return comps
 }
 
-// stdProblemComps extracts the component names from the "<comp>/lib/rustlib
-// missing (std not merged)" problem format.
+// stdProblemComps extracts the component names from the
+// "<comp>/lib/rustlib/<target>/lib missing (std not merged)" problem format.
+// A component is listed once per target whose std is unreachable.
 func stdProblemComps(problems []string) []string {
 	var comps []string
 	for _, p := range problems {
-		if comp, _, ok := strings.Cut(p, "/lib/rustlib missing (std not merged)"); ok {
+		rest, _, ok := strings.Cut(p, " missing (std not merged)")
+		if !ok {
+			continue
+		}
+		if comp, _, ok := strings.Cut(rest, "/lib/rustlib/"); ok {
 			comps = append(comps, comp)
 		}
 	}
@@ -801,5 +806,203 @@ func TestRustLayoutHealer(t *testing.T) {
 	}
 	if problems, err := f.CheckLayout(dir); err != nil || len(problems) != 0 {
 		t.Errorf("layout after a second repair = %v, %v; want no problems", problems, err)
+	}
+}
+
+// --- std merge granularity ---
+
+// buildRustStdFixture creates the part of an extracted Rust tarball that
+// matters for the std merge: the rust-std component holding the rlibs, plus a
+// rustc component that already ships its own lib/rustlib/ (etc/ and the
+// per-target bin/). That pre-existing directory is what made the old
+// whole-directory merge skip rustc entirely, leaving rustc without std.
+func buildRustStdFixture(t *testing.T, dir string) {
+	t.Helper()
+	mkDir := func(parts ...string) string {
+		p := filepath.Join(append([]string{dir}, parts...)...)
+		if err := os.MkdirAll(p, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", p, err)
+		}
+		return p
+	}
+	write := func(p, content string) {
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+
+	stdLib := mkDir("rust-std-x86_64-apple-darwin", "lib", "rustlib", rustStdTarget, "lib")
+	write(filepath.Join(stdLib, "libstd.rlib"), "std")
+	// Siblings of {target}/ inside the source rustlib are not targets.
+	write(filepath.Join(mkDir("rust-std-x86_64-apple-darwin", "lib", "rustlib"), "components"), "rust-std")
+
+	write(filepath.Join(mkDir("rustc", "lib", "rustlib", "etc"), "bash_completions"), "etc")
+	write(filepath.Join(mkDir("rustc", "lib", "rustlib", rustStdTarget, "bin"), "rust-lldb"), "lldb")
+	mkDir("rustc", "bin")
+	mkDir("cargo", "bin")
+}
+
+// rustStdTarget is the target triple used by the std fixtures.
+const rustStdTarget = "x86_64-apple-darwin"
+
+// TestRustMergeStdRustlibWithPreexistingRustlib is the regression test for the
+// E0463 "can't find crate for `std`" failure: rustc ships lib/rustlib/ itself,
+// so merging only when that directory is absent never gave rustc its std, and
+// every compile of a freshly installed Rust failed. The merge has to happen one
+// level down, at {target}/lib.
+func TestRustMergeStdRustlibWithPreexistingRustlib(t *testing.T) {
+	requireSymlinkSupport(t)
+	dir := t.TempDir()
+	buildRustStdFixture(t, dir)
+
+	f := &RustFetcher{}
+	problems, err := f.checkLayout(dir, "darwin")
+	if err != nil {
+		t.Fatalf("checkLayout failed: %v", err)
+	}
+	if got, want := stdProblemComps(problems), []string{"cargo", "rustc"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("std problems for %v; want %v (full: %v)", got, want, problems)
+	}
+
+	if err := f.mergeComponents(dir, "darwin"); err != nil {
+		t.Fatalf("mergeComponents failed: %v", err)
+	}
+
+	for _, comp := range stdComponents {
+		dst := stdLibDir(dir, comp, rustStdTarget)
+		got, err := os.ReadFile(filepath.Join(dst, "libstd.rlib"))
+		if err != nil {
+			t.Errorf("%s: std must be reachable from the %s sysroot: %v", dst, comp, err)
+			continue
+		}
+		if string(got) != "std" {
+			t.Errorf("%s/libstd.rlib = %q; want the std content", dst, got)
+		}
+		// Unix places a relative symlink, so the 140 MB std tree is not
+		// duplicated per sysroot and the version dir stays relocatable.
+		target, err := os.Readlink(dst)
+		if err != nil {
+			t.Errorf("%s: expected a symlink on Unix: %v", dst, err)
+			continue
+		}
+		if filepath.IsAbs(target) {
+			t.Errorf("%s: symlink target %q must be relative", dst, target)
+		}
+		if resolved, err := filepath.EvalSymlinks(dst); err != nil || resolved == "" {
+			t.Errorf("%s: symlink does not resolve: %v", dst, err)
+		}
+	}
+
+	// What rustc already shipped must survive the merge.
+	for _, p := range []string{
+		filepath.Join(dir, "rustc", "lib", "rustlib", "etc", "bash_completions"),
+		filepath.Join(dir, "rustc", "lib", "rustlib", rustStdTarget, "bin", "rust-lldb"),
+	} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s was clobbered by the merge: %v", p, err)
+		}
+	}
+	// The source component is untouched, and non-target entries were ignored.
+	if _, err := os.Stat(filepath.Join(dir, "cargo", "lib", "rustlib", "components")); err == nil {
+		t.Error("cargo/lib/rustlib/components should not exist: only {target}/lib is merged")
+	}
+
+	if problems, err := f.checkLayout(dir, "darwin"); err != nil || len(stdProblemComps(problems)) != 0 {
+		t.Errorf("std problems after the merge = %v, %v; want none", problems, err)
+	}
+}
+
+// TestRustMergeStdRustlibWindowsCopies covers the Windows branch, where creating
+// a symlink needs a privilege the app does not have: the std tree is copied
+// instead, and rustc's own lib/rustlib/ contents are still preserved.
+func TestRustMergeStdRustlibWindowsCopies(t *testing.T) {
+	dir := t.TempDir()
+	buildRustStdFixture(t, dir)
+
+	f := &RustFetcher{}
+	if err := f.mergeComponents(dir, "windows"); err != nil {
+		t.Fatalf("mergeComponents(windows) failed: %v", err)
+	}
+
+	for _, comp := range stdComponents {
+		dst := stdLibDir(dir, comp, rustStdTarget)
+		if target, err := os.Readlink(dst); err == nil {
+			t.Errorf("%s must be a real directory on Windows, got a symlink -> %s", dst, target)
+		}
+		got, err := os.ReadFile(filepath.Join(dst, "libstd.rlib"))
+		if err != nil {
+			t.Errorf("%s: %v", dst, err)
+			continue
+		}
+		if string(got) != "std" {
+			t.Errorf("%s/libstd.rlib = %q; want the std content", dst, got)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "rustc", "lib", "rustlib", rustStdTarget, "bin", "rust-lldb")); err != nil {
+		t.Errorf("rustc's own rustlib contents were clobbered: %v", err)
+	}
+	if problems, err := f.checkLayout(dir, "windows"); err != nil || len(stdProblemComps(problems)) != 0 {
+		t.Errorf("std problems after the merge = %v, %v; want none", problems, err)
+	}
+}
+
+// TestRustMergeStdRustlibIdempotent pins that re-merging (every switch and every
+// startup heals) neither replaces nor empties an existing std directory, so a
+// real copy made by an older build is kept as-is.
+func TestRustMergeStdRustlibIdempotent(t *testing.T) {
+	requireSymlinkSupport(t)
+	dir := t.TempDir()
+	buildRustStdFixture(t, dir)
+
+	// A copy left behind by an older build: a real directory with its own file.
+	legacy := stdLibDir(dir, "cargo", rustStdTarget)
+	if err := os.MkdirAll(legacy, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "libstd.rlib"), []byte("legacy"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f := &RustFetcher{}
+	for i := 0; i < 2; i++ {
+		if err := f.mergeComponents(dir, "darwin"); err != nil {
+			t.Fatalf("run %d: mergeComponents failed: %v", i+1, err)
+		}
+	}
+
+	got, err := os.ReadFile(filepath.Join(legacy, "libstd.rlib"))
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if string(got) != "legacy" {
+		t.Errorf("cargo std = %q; an existing std dir must not be replaced", got)
+	}
+	if _, err := os.Readlink(legacy); err == nil {
+		t.Error("cargo std was turned into a symlink; an existing directory must be kept")
+	}
+	rustcStd := stdLibDir(dir, "rustc", rustStdTarget)
+	if _, err := os.Readlink(rustcStd); err != nil {
+		t.Errorf("%s should still be a symlink after two runs: %v", rustcStd, err)
+	}
+	if problems, err := f.checkLayout(dir, "darwin"); err != nil || len(problems) != 0 {
+		t.Errorf("problems after two merges = %v, %v; want none", problems, err)
+	}
+}
+
+// TestRustMergeStdRustlibNoStdComponent guards the no-op path: without a
+// rust-std component there is nothing to merge and no rustlib may be created.
+func TestRustMergeStdRustlibNoStdComponent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "rustc", "bin"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	f := &RustFetcher{}
+	for _, goos := range []string{"darwin", "windows"} {
+		if err := f.mergeComponents(dir, goos); err != nil {
+			t.Errorf("mergeComponents(%s) without rust-std failed: %v", goos, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "rustc", "lib", "rustlib")); err == nil {
+		t.Error("rustc/lib/rustlib should not be created without a rust-std component")
 	}
 }
