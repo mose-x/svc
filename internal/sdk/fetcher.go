@@ -39,3 +39,19 @@ type VersionFetcher interface {
 type ChecksumFetcher interface {
 	FetchChecksum(version string) (string, error)
 }
+
+// LayoutHealer is an optional interface for fetchers whose extracted layout
+// can be incomplete even though the archive downloaded and verified fine.
+// Rust is the case in point: its tarball ships one directory per component,
+// and the tools outside rustc/ need rustc's shared runtime bridged in before
+// they can start. SwitchVersion checks the version it just activated and
+// repairs it in place, so versions installed before a layout fix existed
+// become usable without a reinstall.
+type LayoutHealer interface {
+	// CheckLayout returns human-readable problems with the layout of
+	// versionDir. An empty slice means the layout is healthy.
+	CheckLayout(versionDir string) ([]string, error)
+	// RepairLayout fixes everything CheckLayout reports. Must be idempotent:
+	// it also runs over versions that turn out to be healthy.
+	RepairLayout(versionDir string) error
+}

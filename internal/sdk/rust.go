@@ -110,19 +110,11 @@ func (f *RustFetcher) VerifyCommand() (string, []string) {
 // rustc at rustc/bin/rustc computes sysroot=rustc/ but std is at
 // rust-std-{target}/lib/rustlib/ — a sibling, not under rustc/.
 func (f *RustFetcher) MergeComponents(versionDir string) error {
-	entries, err := os.ReadDir(versionDir)
-	if err != nil {
+	if _, err := os.ReadDir(versionDir); err != nil {
 		return fmt.Errorf("failed to read version dir: %w", err)
 	}
 
-	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "rust-std-") {
-			continue
-		}
-		srcRustlib := filepath.Join(versionDir, entry.Name(), "lib", "rustlib")
-		if info, err := os.Stat(srcRustlib); err != nil || !info.IsDir() {
-			continue
-		}
+	if srcRustlib := findStdRustlib(versionDir); srcRustlib != "" {
 		for _, comp := range []string{"cargo", "rustc"} {
 			dstRustlib := filepath.Join(versionDir, comp, "lib", "rustlib")
 			if _, err := os.Stat(dstRustlib); err == nil {
@@ -137,6 +129,83 @@ func (f *RustFetcher) MergeComponents(versionDir string) error {
 		}
 	}
 	return f.LinkComponentRuntime(versionDir, runtime.GOOS)
+}
+
+// CheckLayout reports the layout problems of an installed version that
+// RepairLayout would fix; an empty result means the layout matches what a
+// fresh install produces. Implements sdk.LayoutHealer so switching to a
+// version installed before a layout fix existed can self-heal instead of
+// needing a reinstall.
+func (f *RustFetcher) CheckLayout(versionDir string) ([]string, error) {
+	return f.checkLayout(versionDir, runtime.GOOS)
+}
+
+// RepairLayout restores the extracted layout (std merge + runtime bridge) by
+// re-running MergeComponents, which is idempotent — healthy versions are left
+// untouched.
+func (f *RustFetcher) RepairLayout(versionDir string) error {
+	return f.MergeComponents(versionDir)
+}
+
+// checkLayout is the goos-parameterised core of CheckLayout so tests can
+// assert both the Unix (lib symlink) and Windows (DLL next to the exe)
+// expectations on any host.
+func (f *RustFetcher) checkLayout(versionDir string, goos string) ([]string, error) {
+	var problems []string
+
+	// std must be reachable from both sysroots (MergeComponents step 1).
+	if findStdRustlib(versionDir) != "" {
+		for _, comp := range []string{"cargo", "rustc"} {
+			if _, err := os.Stat(filepath.Join(versionDir, comp, "lib", "rustlib")); err != nil {
+				problems = append(problems, fmt.Sprintf("%s/lib/rustlib missing (std not merged)", comp))
+			}
+		}
+	}
+
+	// rustc's shared runtime must be reachable from every component that ships
+	// commands (MergeComponents step 2).
+	_, names, err := rustRuntimeFiles(versionDir, goos)
+	if err != nil {
+		return nil, err
+	}
+	if len(names) == 0 {
+		return problems, nil
+	}
+	comps, err := componentBinDirs(versionDir)
+	if err != nil {
+		return nil, err
+	}
+	for _, comp := range comps {
+		dstDir := runtimeTargetDir(versionDir, comp, goos)
+		for _, name := range names {
+			if _, err := os.Lstat(filepath.Join(dstDir, name)); err != nil {
+				problems = append(problems, fmt.Sprintf("%s cannot resolve the rustc runtime (%s missing from %s)", comp, name, dstDir))
+				break
+			}
+		}
+	}
+	return problems, nil
+}
+
+// findStdRustlib returns the first rust-std-{target}/lib/rustlib directory in
+// versionDir, or "" when the std component is absent. Only the first match is
+// used because MergeComponents copies into a fixed destination, so later
+// rust-std dirs (extra target stdlibs) would be skipped anyway.
+func findStdRustlib(versionDir string) string {
+	entries, err := os.ReadDir(versionDir)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "rust-std-") {
+			continue
+		}
+		p := filepath.Join(versionDir, entry.Name(), "lib", "rustlib")
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			return p
+		}
+	}
+	return ""
 }
 
 // LinkComponentRuntime bridges rustc's shared runtime into the sibling
@@ -160,10 +229,25 @@ func (f *RustFetcher) MergeComponents(versionDir string) error {
 // already-installed version is safe. goos is a parameter rather than
 // runtime.GOOS so tests can exercise both branches on any host.
 func (f *RustFetcher) LinkComponentRuntime(versionDir string, goos string) error {
-	if goos == "windows" {
-		return linkWindowsRuntimeDLLs(versionDir)
+	_, names, err := rustRuntimeFiles(versionDir, goos)
+	if err != nil {
+		return err
 	}
-	return linkUnixRuntimeLibs(versionDir, goos)
+	if len(names) == 0 {
+		return nil // no rustc component, or it ships no shared runtime
+	}
+	comps, err := componentBinDirs(versionDir)
+	if err != nil {
+		return err
+	}
+	for _, comp := range comps {
+		for _, name := range names {
+			if err := placeRuntimeFile(versionDir, comp, name, goos); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // componentBinDirs returns the names of the subdirectories of versionDir that
@@ -189,88 +273,81 @@ func componentBinDirs(versionDir string) ([]string, error) {
 	return dirs, nil
 }
 
-func linkUnixRuntimeLibs(versionDir string, goos string) error {
-	rustcLib := filepath.Join(versionDir, "rustc", "lib")
-	entries, err := os.ReadDir(rustcLib)
+// rustRuntimeFiles returns the directory that holds rustc's shared runtime and
+// the file names sibling components need from it: rustc/bin/*.dll on Windows
+// (the loader searches the .exe's own directory), rustc/lib/*.{dylib,so} on
+// Unix (resolved through the @loader_path/../lib / $ORIGIN/../lib rpath). A
+// missing rustc component yields no names and no error.
+func rustRuntimeFiles(versionDir string, goos string) (string, []string, error) {
+	dir := filepath.Join(versionDir, "rustc", "lib")
+	if goos == "windows" {
+		dir = filepath.Join(versionDir, "rustc", "bin")
+	}
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil // no rustc component installed: nothing to bridge
+			return dir, nil, nil
 		}
-		return fmt.Errorf("failed to read rustc/lib: %w", err)
+		return dir, nil, fmt.Errorf("failed to read %s: %w", dir, err)
 	}
 
-	var libs []string
+	var names []string
 	for _, entry := range entries {
-		if !entry.IsDir() && isRustSharedLib(entry.Name(), goos) {
-			libs = append(libs, entry.Name())
+		if entry.IsDir() {
+			continue
 		}
-	}
-	if len(libs) == 0 {
-		return nil
-	}
-
-	comps, err := componentBinDirs(versionDir)
-	if err != nil {
-		return err
-	}
-	for _, comp := range comps {
-		libDir := filepath.Join(versionDir, comp, "lib")
-		if err := os.MkdirAll(libDir, 0755); err != nil {
-			return err
-		}
-		for _, lib := range libs {
-			link := filepath.Join(libDir, lib)
-			if _, err := os.Lstat(link); err == nil {
-				continue
+		name := entry.Name()
+		if goos == "windows" {
+			if strings.EqualFold(filepath.Ext(name), ".dll") {
+				names = append(names, name)
 			}
-			// Relative target so the version dir stays relocatable.
-			target := filepath.Join("..", "..", "rustc", "lib", lib)
-			if err := os.Symlink(target, link); err != nil {
-				return fmt.Errorf("failed to link %s into %s: %w", lib, libDir, err)
-			}
+			continue
+		}
+		if isRustSharedLib(name, goos) {
+			names = append(names, name)
 		}
 	}
-	return nil
+	return dir, names, nil
 }
 
-func linkWindowsRuntimeDLLs(versionDir string) error {
-	rustcBin := filepath.Join(versionDir, "rustc", "bin")
-	entries, err := os.ReadDir(rustcBin)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // no rustc component installed: nothing to bridge
-		}
-		return fmt.Errorf("failed to read rustc/bin: %w", err)
+// runtimeTargetDir returns where comp expects the runtime files to appear:
+// next to the .exe on Windows, in <comp>/lib on Unix (what the rpath names).
+func runtimeTargetDir(versionDir string, comp string, goos string) string {
+	if goos == "windows" {
+		return filepath.Join(versionDir, comp, "bin")
 	}
+	return filepath.Join(versionDir, comp, "lib")
+}
 
-	var dlls []string
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.EqualFold(filepath.Ext(entry.Name()), ".dll") {
-			dlls = append(dlls, entry.Name())
-		}
-	}
-	if len(dlls) == 0 {
+// placeRuntimeFile makes one rustc runtime file reachable from comp: a
+// relative symlink into <comp>/lib on Unix (relative so the version dir stays
+// relocatable, and per-file so a pre-existing real lib dir such as cargo/lib
+// keeps its contents), or a hardlink into <comp>/bin on Windows with a copy
+// fallback for volumes without hardlink support. Existing entries are left
+// untouched, so repeated runs are no-ops.
+func placeRuntimeFile(versionDir string, comp string, name string, goos string) error {
+	dstDir := runtimeTargetDir(versionDir, comp, goos)
+	dst := filepath.Join(dstDir, name)
+	if _, err := os.Lstat(dst); err == nil {
 		return nil
 	}
 
-	comps, err := componentBinDirs(versionDir)
-	if err != nil {
-		return err
-	}
-	for _, comp := range comps {
-		binDir := filepath.Join(versionDir, comp, "bin")
-		for _, dll := range dlls {
-			dst := filepath.Join(binDir, dll)
-			if _, err := os.Lstat(dst); err == nil {
-				continue
-			}
-			src := filepath.Join(rustcBin, dll)
-			if err := os.Link(src, dst); err != nil {
-				if err := fsutil.CopyFile(src, dst, 0644); err != nil {
-					return fmt.Errorf("failed to place %s into %s: %w", dll, binDir, err)
-				}
+	if goos == "windows" {
+		src := filepath.Join(versionDir, "rustc", "bin", name)
+		if err := os.Link(src, dst); err != nil {
+			if err := fsutil.CopyFile(src, dst, 0644); err != nil {
+				return fmt.Errorf("failed to place %s into %s: %w", name, dstDir, err)
 			}
 		}
+		return nil
+	}
+
+	if err := os.MkdirAll(dstDir, 0755); err != nil {
+		return err
+	}
+	target := filepath.Join("..", "..", "rustc", "lib", name)
+	if err := os.Symlink(target, dst); err != nil {
+		return fmt.Errorf("failed to link %s into %s: %w", name, dstDir, err)
 	}
 	return nil
 }
