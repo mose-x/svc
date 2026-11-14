@@ -428,3 +428,45 @@ func TestReplaceShimBinary(t *testing.T) {
 		t.Fatalf("target modified despite write failure: %q", b)
 	}
 }
+
+// --- ShimBinaryInstalled ---
+
+// TestShimBinaryInstalled guards the startup shim refresh: re-running
+// ConfigureSdk without the base shim binary creates no command shims, and the
+// config update would then record an empty command set — dropping the SDK from
+// PATH instead of refreshing it. Callers need a reliable way to tell the two
+// states apart.
+func TestShimBinaryInstalled(t *testing.T) {
+	if !newTestManager(t).ShimBinaryInstalled() {
+		t.Error("ShimBinaryInstalled = false; newTestManager places the base shim binary")
+	}
+
+	dir := t.TempDir()
+	cfg := &config.Config{}
+	cfg.SetHomeDir(dir)
+	cfg.SetSvcDir(dir)
+	m := New(cfg)
+	if m.ShimBinaryInstalled() {
+		t.Error("ShimBinaryInstalled = true; want false when there is no shims dir at all")
+	}
+
+	// An existing but empty shims dir (EnsureSetup failed halfway) is still
+	// "missing": there is nothing for the command shims to link to.
+	if err := os.MkdirAll(cfg.ShimsDir(), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if m.ShimBinaryInstalled() {
+		t.Error("ShimBinaryInstalled = true for an empty shims dir")
+	}
+
+	name := "svc-shim"
+	if runtime.GOOS == "windows" {
+		name = "svc-shim.exe"
+	}
+	if err := os.WriteFile(filepath.Join(cfg.ShimsDir(), name), []byte("fake"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if !m.ShimBinaryInstalled() {
+		t.Error("ShimBinaryInstalled = false; want true once the base shim binary exists")
+	}
+}

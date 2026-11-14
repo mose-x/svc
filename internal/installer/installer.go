@@ -2,8 +2,11 @@ package installer
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"time"
 
 	"svc/internal/apperr"
@@ -649,6 +652,75 @@ func (s *Service) HealActiveVersions() {
 			continue // recorded but not (or no longer) installed: nothing to heal
 		}
 		s.healLayout(f, sdkType, version, versionDir)
+	}
+}
+
+// RefreshStaleShims re-runs the shim configuration of every SDK whose recorded
+// bin dirs or env vars no longer match what its fetcher reports.
+//
+// shims.json is written at install/switch time, so an SDK whose fetcher gained a
+// bin dir in a later release keeps its old shim set until the user happens to
+// switch versions, and the new commands never reach PATH. Rust is the case in
+// point: clippy-preview/bin and rust-analyzer-preview/bin were added to
+// GetBinDirs after installs already existed, leaving `cargo clippy` and
+// `rust-analyzer` unshimmed. Called once at startup, after HealActiveVersions,
+// so the tree being shimmed is the repaired one. Best effort: a failure is
+// logged and the next SDK is still refreshed.
+func (s *Service) RefreshStaleShims() {
+	if s.registry == nil || s.cfg == nil || s.pathMgr == nil || s.shimMgr == nil {
+		return
+	}
+	if !s.shimMgr.ShimBinaryInstalled() {
+		// Without the base binary every createShimFor fails, and the config
+		// update would then record an empty command set — dropping the SDK's
+		// shims from PATH instead of refreshing them. EnsureSetup installs it
+		// earlier in startup; if that failed, leave shims.json alone.
+		logger.Warn("Skipping shim refresh: the base shim binary is missing (run 'svc init' to repair)")
+		return
+	}
+
+	shimCfg := s.shimMgr.GetShimConfig()
+	sdkTypes := make([]string, 0, len(shimCfg.SdkTypes))
+	for sdkType := range shimCfg.SdkTypes {
+		sdkTypes = append(sdkTypes, sdkType)
+	}
+	sort.Strings(sdkTypes) // deterministic order for logs and tests
+
+	for _, sdkType := range sdkTypes {
+		f := s.registry.Get(sdk.SdkType(sdkType))
+		if f == nil {
+			continue // recorded by a build that knew an SDK this one does not
+		}
+		entry := shimCfg.SdkTypes[sdkType]
+		binDirs, envVars := f.GetBinDirs(), f.GetExtraEnvVars()
+		if slices.Equal(entry.BinDirs, binDirs) && maps.Equal(entry.EnvVars, envVars) {
+			continue
+		}
+		// Both shims.json and config.json are user-editable, so neither the SDK
+		// type nor the recorded version may be used as a path segment unchecked.
+		if err := helpers.ValidatePathSegment(sdkType); err != nil {
+			logger.Warn("Skipping shim refresh for %q: %v", sdkType, err)
+			continue
+		}
+		version := s.cfg.GetActiveVersion(sdkType)
+		if version == "" {
+			logger.Info("Skipping shim refresh for %s: no active version", sdkType)
+			continue
+		}
+		if err := helpers.ValidatePathSegment(version); err != nil {
+			logger.Warn("Skipping shim refresh for %s: invalid active version: %v", sdkType, err)
+			continue
+		}
+		versionDir := s.cfg.SdkVersionDir(sdkType, version)
+		if _, err := os.Stat(versionDir); err != nil {
+			logger.Info("Skipping shim refresh for %s %s: the version dir is gone", sdkType, version)
+			continue
+		}
+
+		logger.Info("Refreshing %s shims: binDirs %v -> %v, envVars %v -> %v", sdkType, entry.BinDirs, binDirs, entry.EnvVars, envVars)
+		if err := s.pathMgr.ConfigureSdk(sdkType, versionDir, binDirs, envVars); err != nil {
+			logger.Warn("Failed to refresh %s shims: %v", sdkType, err)
+		}
 	}
 }
 

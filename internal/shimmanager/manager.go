@@ -545,6 +545,17 @@ func (m *Manager) getShimBinaryPath() string {
 	return filepath.Join(m.cfg.ShimsDir(), name)
 }
 
+// ShimBinaryInstalled reports whether the base shim binary that every command
+// shim links to is in place. EnsureSetup installs it; callers that re-run
+// ConfigureSdk outside the normal install/switch flow check this first, because
+// without it createShimFor fails for every command and the config update would
+// record an empty command set — dropping the SDK's shims instead of refreshing
+// them.
+func (m *Manager) ShimBinaryInstalled() bool {
+	_, err := os.Stat(m.getShimBinaryPath())
+	return err == nil
+}
+
 // updateShimConfig updates shims.json with the SDK type config and its commands.
 // The whole read-modify-write cycle runs under the cross-process shims.json
 // lock (item 3): the GUI can run in two instances and the CLI can run in
