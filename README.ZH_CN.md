@@ -200,7 +200,11 @@ brew tap mose-x/tap
 brew install --cask mose-x/tap/svc
 ```
 
-cask 位于 [mose-x/tap](https://github.com/mose-x/homebrew-tap)，由定时工作流自动跟随每一个新 release。注意事项见 `brew info --cask mose-x/tap/svc`：应用未签名（首次启动需右键 → 打开），卸载后会保留 `~/.svc` 以及 shell 配置里的 `source ~/.svc.rc` 这一行。
+安装的是最新 release 的 `.dmg`，会放进 `/Applications`。cask 位于 [mose-x/homebrew-tap](https://github.com/mose-x/homebrew-tap)，那边的定时任务每天按已发布的 release 资源重写版本号并重算全部 `sha256`。
+
+注意事项见 `brew info --cask mose-x/tap/svc`：应用未签名（首次启动需右键 → 打开），卸载后会保留 `~/.svc` 以及 shell 配置里的 `source ~/.svc.rc` 这一行。
+
+Homebrew 6 默认不加载未信任的第三方 tap：上面的全限定名总是可用；如果还想用短名 `brew install --cask svc`，先执行一次 `brew trust mose-x/tap`（`brew untrust mose-x/tap` 可撤销）。
 
 ## 自动更新机制
 
