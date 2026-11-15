@@ -237,6 +237,75 @@ func TestCreateShimFor_removesOtherVariants(t *testing.T) {
 	}
 }
 
+// --- safeShimName (commands with dots, like python3.13) ---
+
+// TestSafeShimName pins the shim-name guard. Real toolchains ship commands
+// with dots, underscores and plus signs (python3.13, pip3.13, 2to3-3.13,
+// x86_64-linux-gnu-g++); the old [A-Za-z0-9-] rule refused every one of them,
+// so those commands never got a shim and a refresh left the pre-existing ones
+// pointing at a superseded svc-shim inode. Names that could escape the shims
+// directory or reach a shell must still be refused.
+func TestSafeShimName(t *testing.T) {
+	allowed := []string{
+		"node", "python3", "python3.13", "python3.13-config", "pip3.13",
+		"pydoc3.13", "idle3.13", "2to3-3.13", "x86_64-linux-gnu-g++",
+		"i686_w64_mingw32-gcc", "cargo-clippy", "rust-analyzer", "a_b", "v1.2",
+	}
+	for _, name := range allowed {
+		if !safeShimName(name) {
+			t.Errorf("safeShimName(%q) = false; want true: a real toolchain command must get a shim", name)
+		}
+	}
+
+	refused := []string{
+		"", ".", "..", "...", "../svc", `..\svc`, "a/b", `a\b`, "/etc/passwd",
+		"svc;rm -rf /", "a b", "a$b", "a`b", "a*b", "a?b", "a|b", "a&b", "a>b",
+		`"a"`, "'a'", "-rf", ".hidden", "~", "#a", "a\tb", "a\nb", "node\x00",
+	}
+	for _, name := range refused {
+		if safeShimName(name) {
+			t.Errorf("safeShimName(%q) = true; want false: must not escape the shims dir or reach a shell", name)
+		}
+	}
+}
+
+// TestCreateShimFor_dottedCommand is the end-to-end half of the same
+// regression: the versioned Python commands must actually land in the shims
+// dir, hardlinked to the base shim like any other command.
+func TestCreateShimFor_dottedCommand(t *testing.T) {
+	m := newTestManager(t)
+	shimsDir := m.cfg.ShimsDir()
+	ext := shimExt()
+
+	for _, name := range []string{"python3.13", "pip3.13", "python3.13-config"} {
+		if err := m.createShimFor(name, ext); err != nil {
+			t.Fatalf("createShimFor(%q): %v", name, err)
+		}
+		got, err := os.ReadFile(filepath.Join(shimsDir, name+ext))
+		if err != nil {
+			t.Fatalf("shim %q was not created: %v", name, err)
+		}
+		if string(got) != "fake-svc-shim" {
+			t.Errorf("shim %q content = %q; want the svc-shim bytes", name, string(got))
+		}
+	}
+}
+
+// TestCreateShimFor_refusesTraversal keeps the M8 guarantee the relaxation
+// must not weaken: a name that would climb out of the shims dir is refused
+// and nothing is created outside it.
+func TestCreateShimFor_refusesTraversal(t *testing.T) {
+	m := newTestManager(t)
+
+	if err := m.createShimFor("../evil", shimExt()); err == nil {
+		t.Fatal("createShimFor accepted a traversal name; want an error")
+	}
+	outside := filepath.Join(m.cfg.ShimsDir(), "..", "evil")
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Errorf("%s exists; a refused shim name must not create anything", outside)
+	}
+}
+
 // --- filesEqual (BUG G: content comparison helper) ---
 
 // TestFilesEqual pins BUG G's helper: same bytes -> true; different bytes or

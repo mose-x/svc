@@ -86,6 +86,41 @@ func secureUpdatePayload(fixedPath string) (string, error) {
 	return securePath, nil
 }
 
+// buildBundleVersionSync renders the sh snippet that keeps a macOS .app
+// bundle's Info.plist in step with the binary that was just put in place.
+// exeQ is the already shell-quoted path of that binary.
+//
+// A self-update only replaces Contents/MacOS/svc, so without this the bundle
+// keeps reporting the version its .dmg was built with -- Finder "Get Info",
+// LaunchServices and anything else reading CFBundleShortVersionString -- even
+// though `svc version` and the in-app About page are already correct.
+//
+// The stamp is read back from the binary itself instead of being threaded
+// through from version.json: both scripts already exec that binary to relaunch
+// it, and deriving the version from the bytes that actually landed keeps the
+// rollback path from ever disagreeing with what it restored. The value is
+// re-checked against a strict charset before it reaches PlistBuddy, so hostile
+// or truncated `version` output cannot inject shell.
+//
+// Outside an .app bundle -- every Linux layout -- there is no Info.plist next
+// to the binary's parent directory and the whole snippet is a no-op.
+func buildBundleVersionSync(exeQ string) string {
+	return fmt.Sprintf(`plist="$(dirname %s)/../Info.plist"
+if [ -f "$plist" ] && [ -x /usr/libexec/PlistBuddy ]; then
+    new_ver=$(%s version 2>/dev/null | awk '{print $2; exit}')
+    case "$new_ver" in
+    '' | *[!A-Za-z0-9._+-]*) new_ver="" ;;
+    esac
+    if [ -n "$new_ver" ]; then
+        echo "Syncing bundle version to $new_ver..."
+        for key in CFBundleShortVersionString CFBundleVersion; do
+            /usr/libexec/PlistBuddy -c "Set :$key $new_ver" "$plist" 2>/dev/null ||
+                /usr/libexec/PlistBuddy -c "Add :$key string $new_ver" "$plist" 2>/dev/null || true
+        done
+    fi
+fi`, exeQ, exeQ)
+}
+
 // buildUnixUpdateScript renders the /bin/sh body for ApplyUpdate. Extracted so
 // the wait/backup/replace/verify/rollback logic can be unit-tested without
 // launching the updater for real (it touches the running binary + quits the
@@ -95,6 +130,7 @@ func buildUnixUpdateScript(pid int, currentExe, bak, newExe, expectedHash string
 	bakQ := shellQuote(bak)
 	newQ := shellQuote(newExe)
 	hashQ := shellQuote(expectedHash)
+	plistSync := buildBundleVersionSync(exeQ)
 	return fmt.Sprintf(`#!/bin/sh
 expected_hash=%s
 echo "Waiting for application to close..."
@@ -141,10 +177,11 @@ if [ "$actual_hash" != "$expected_hash" ]; then
     mv -f %s %s 2>/dev/null || cp -f %s %s
     exit 1
 fi
+%s
 echo "Starting new version..."
 nohup %s > /dev/null 2>&1 &
 rm -f "$0"
-`, hashQ, pid, bakQ, bakQ, exeQ, bakQ, exeQ, bakQ, exeQ, newQ, exeQ, newQ, exeQ, newQ, bakQ, exeQ, bakQ, exeQ, exeQ, exeQ, exeQ, bakQ, exeQ, bakQ, exeQ, exeQ)
+`, hashQ, pid, bakQ, bakQ, exeQ, bakQ, exeQ, bakQ, exeQ, newQ, exeQ, newQ, exeQ, newQ, bakQ, exeQ, bakQ, exeQ, exeQ, exeQ, exeQ, bakQ, exeQ, bakQ, exeQ, plistSync, exeQ)
 }
 
 // buildUnixRollbackScript renders the /bin/sh body for RollbackUpdate.
@@ -152,6 +189,7 @@ rm -f "$0"
 func buildUnixRollbackScript(pid int, bak, currentExe string) string {
 	exeQ := shellQuote(currentExe)
 	bakQ := shellQuote(bak)
+	plistSync := buildBundleVersionSync(exeQ)
 	return fmt.Sprintf(`#!/bin/sh
 echo "Waiting for application to close..."
 timeout=60
@@ -172,10 +210,11 @@ if ! mv -f %s %s 2>/dev/null; then
     fi
 fi
 chmod +x %s
+%s
 echo "Starting restored version..."
 nohup %s > /dev/null 2>&1 &
 rm -f "$0"
-`, pid, bakQ, exeQ, bakQ, exeQ, bakQ, exeQ, exeQ)
+`, pid, bakQ, exeQ, bakQ, exeQ, bakQ, exeQ, plistSync, exeQ)
 }
 
 // ApplyUpdate launches a background /bin/sh script that: waits for the
