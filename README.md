@@ -193,6 +193,15 @@ Verify integrity with the published checksums:
 sha256sum -c sha256sums.txt --ignore-missing
 ```
 
+### Homebrew (macOS)
+
+```bash
+brew tap mose-x/tap
+brew install --cask mose-x/tap/svc
+```
+
+The cask lives in [mose-x/tap](https://github.com/mose-x/homebrew-tap) and is re-pointed at every new release by a scheduled workflow. `brew info --cask mose-x/tap/svc` prints the caveats: the app is not code signed (right-click → Open on first launch), and uninstalling keeps `~/.svc` plus the `source ~/.svc.rc` line in your shell rc.
+
 ## Self-Update Mechanism
 
 The app checks `https://github.com/mose-x/svc/releases/latest/download/version.json` (configured in [about.json](about.json)). Each release ships a `version.json` describing per-platform download URLs and SHA256 checksums, plus a standalone `sha256sums.txt`.
