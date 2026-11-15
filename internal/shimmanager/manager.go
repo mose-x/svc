@@ -486,6 +486,42 @@ func shimExtFor(ext string) string {
 	return ext
 }
 
+// safeShimName reports whether name is safe to use as a shim filename.
+//
+// Shim names come from an SDK's bin/ listing and are persisted in shims.json,
+// so they are untrusted input that must not be able to escape the shims
+// directory. Path separators, whitespace and shell metacharacters are
+// rejected, as are empty names and names that do not start with an
+// alphanumeric -- which rules out "." , "..", hidden files and option-like
+// names in one go.
+//
+// Interior dots, underscores, plus signs and hyphens are legitimate: real
+// toolchains ship python3.13, pip3.13, pydoc3.13, 2to3-3.13 and
+// x86_64-linux-gnu-g++. The previous [A-Za-z0-9-] rule rejected all of them,
+// so those commands silently never got a shim (and, once the shims were
+// refreshed, kept pointing at a superseded svc-shim inode).
+//
+// Pure for testability.
+func safeShimName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '.', c == '_', c == '+', c == '-':
+			// A leading dot or hyphen would make the shim a hidden file or an
+			// option-like name; both are refused (this also covers "." and "..").
+			if i == 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // createShimFor creates a shim for a command as a hardlink to the base shim
 // binary (falling back to a copy). On Unix, if the base shim is itself a
 // symlink (rare), resolve it first so the hardlink points at the real file,
@@ -494,11 +530,9 @@ func shimExtFor(ext string) string {
 // .cmd/.bat targets get a .exe shim too (see shimExtFor).
 func (m *Manager) createShimFor(cmdName, ext string) error {
 	// M8: Validate cmdName before any path construction to prevent path
-	// traversal via tampered shims.json. Only alphanumeric + hyphen allowed.
-	for _, c := range cmdName {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') {
-			return fmt.Errorf("refusing to create shim for unsafe command name: %s", cmdName)
-		}
+	// traversal via tampered shims.json.
+	if !safeShimName(cmdName) {
+		return fmt.Errorf("refusing to create shim for unsafe command name: %s", cmdName)
 	}
 	ext = shimExtFor(ext)
 	// Purge ALL variants of cmdName first. The previous code only removed
