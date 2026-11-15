@@ -14,9 +14,11 @@ import (
 // `sha256 "TO_BE_FILLED"`, which makes `brew install` fail outright.
 //
 // These tests pin that decision down. They fail if a cask copy comes back, and
-// if either README stops documenting the install path that actually works on
-// Homebrew 6: the fully qualified `mose-x/tap/svc`, which loads without
-// `brew trust`, plus the trust hint for anyone who wants the short name.
+// if either README stops documenting an install path that actually works:
+// `brew trust mose-x/tap` first, then `brew tap`, then the fully qualified
+// `mose-x/tap/svc`. Homebrew 7 refuses every entry of an untrusted tap, the
+// fully qualified name included, so trusting is no longer a hint for short-name
+// users and its position in the block matters.
 
 // homebrewReadmes pairs each README with the heading that ends its Homebrew
 // section, so the assertions only ever look at that one section.
@@ -91,13 +93,15 @@ func TestReadmesInstallFromTheTapByItsFullName(t *testing.T) {
 				t.Errorf("%s: the Homebrew block must contain %q, got:\n%s", readme.file, want, block)
 			}
 		}
-		// The bare short name is exactly what Homebrew 6 refuses to load from an
-		// untrusted tap, so it must not be the documented install command.
+		// The short name only resolves once the tap is both tapped and trusted,
+		// and stays ambiguous against any other tap that ships a `svc`. The
+		// fully qualified form has neither problem, so that is what gets
+		// documented.
 		for _, line := range strings.Split(block, "\n") {
 			switch cmd := strings.TrimSpace(line); cmd {
 			case "brew install svc", "brew install --cask svc":
-				t.Errorf("%s: documents the short name %q, which fails on Homebrew 6 "+
-					"until the reader runs `brew trust mose-x/tap`", readme.file, cmd)
+				t.Errorf("%s: documents the short name %q, which needs a trusted "+
+					"and tapped mose-x/tap and is ambiguous besides", readme.file, cmd)
 			}
 		}
 	}
@@ -110,10 +114,43 @@ func TestReadmesExplainTheHomebrewTrustRequirement(t *testing.T) {
 			"brew trust mose-x/tap",
 			"brew untrust mose-x/tap",
 			"mose-x/homebrew-tap",
+			// Homebrew 7 requires trust for the fully qualified name too, and
+			// the record is per user rather than per tap checkout. Both facts
+			// have to be spelled out, or readers assume one `brew trust` covers
+			// every install form and every machine.
+			"Homebrew 7",
+			"trust.json",
 		} {
 			if !strings.Contains(section, want) {
 				t.Errorf("%s: the Homebrew section must mention %q", readme.file, want)
 			}
+		}
+	}
+}
+
+// TestReadmesTrustTheTapBeforeInstalling guards the order of the copy-paste
+// block. `brew trust` is idempotent and does not need the tap to exist yet, so
+// trusting first is the only ordering that is right both on a machine that
+// never saw mose-x/tap and on one that already tapped it.
+func TestReadmesTrustTheTapBeforeInstalling(t *testing.T) {
+	for _, readme := range homebrewReadmes {
+		section := homebrewSection(t, readme.file, readme.sectionEnd)
+		block := firstBashBlock(t, readme.file, section)
+		trustLine, installLine := -1, -1
+		for i, line := range strings.Split(block, "\n") {
+			switch strings.TrimSpace(line) {
+			case "brew trust mose-x/tap":
+				trustLine = i
+			case "brew install --cask mose-x/tap/svc":
+				installLine = i
+			}
+		}
+		if trustLine < 0 {
+			t.Errorf("%s: the Homebrew block must run `brew trust mose-x/tap`, got:\n%s", readme.file, block)
+			continue
+		}
+		if installLine >= 0 && trustLine > installLine {
+			t.Errorf("%s: `brew trust mose-x/tap` must precede the install line, got:\n%s", readme.file, block)
 		}
 	}
 }
