@@ -132,10 +132,9 @@ svc/
 │   │   └── types/             # TypeScript 类型定义
 │   └── wailsjs/               # Wails 自动生成的绑定
 ├── winres/                    # Windows 资源（图标、清单）
-├── .github/workflows/
-│   ├── ci.yml                 # PR 上的 lint + test + commit-lint
-│   └── build.yml              # tag 推送时 6 平台构建 + 发布
-└── version.json.example       # 自更新用的 version.json 示例
+└── .github/workflows/
+    ├── ci.yml                 # PR 上的 lint + test + commit-lint
+    └── build.yml              # tag 推送时 6 平台构建 + 发布
 ```
 
 ## 数据存储
@@ -196,50 +195,40 @@ sha256sum -c sha256sums.txt --ignore-missing
 ### Homebrew（macOS）
 
 ```bash
+brew trust mose-x/tap
 brew tap mose-x/tap
 brew install --cask mose-x/tap/svc
 ```
 
-安装的是最新 release 的 `.dmg`，会放进 `/Applications`。cask 位于 [mose-x/homebrew-tap](https://github.com/mose-x/homebrew-tap)，那边的定时任务每天按已发布的 release 资源重写版本号并重算全部 `sha256`。
+安装的是最新 release 的 `.dmg`，会放进 `/Applications`。cask 位于 [mose-x/homebrew-tap](https://github.com/mose-x/homebrew-tap)，那边的定时任务每天按已发布的 release 资源重写版本号并重算全部 `sha256`。Homebrew 只是可选路径：直接用[安装](#安装)一节的下载链接即可，不需要下面这些。
 
 注意事项见 `brew info --cask mose-x/tap/svc`：应用未签名（首次启动需右键 → 打开），卸载后会保留 `~/.svc` 以及 shell 配置里的 `source ~/.svc.rc` 这一行。
 
-Homebrew 6 默认不加载未信任的第三方 tap：上面的全限定名总是可用；如果还想用短名 `brew install --cask svc`，先执行一次 `brew trust mose-x/tap`（`brew untrust mose-x/tap` 可撤销）。
+Homebrew 7 会拒绝加载未信任第三方 tap 的**任何**条目，上面的全限定名也不例外，所以 `brew trust mose-x/tap` 要放在最前面。它是幂等的，而且不要求 tap 已经存在，因此这个顺序在从没见过该 tap 的机器上同样成立。Homebrew 6 只对短名（`brew install --cask svc`）要求信任；两者都可以用 `brew untrust mose-x/tap` 撤销。
+
+信任状态按用户记录在 `~/.homebrew/trust.json`（设置了 `$XDG_CONFIG_HOME` 时是 `$XDG_CONFIG_HOME/homebrew/trust.json`），不在 tap 目录里，所以 `brew untap`/`brew tap` 和 `brew update` 都不会清掉它 —— 但重装 Homebrew、换机器或换 macOS 账号都要再执行一次。`brew trust` 命令本身需要 Homebrew 5.1.15 及以上；更老的版本既不强制信任也没有这个命令。执行之前 `brew tap-info mose-x/tap` 会显示 `Untrusted`，这是预期且无害的。请用它而不是 `HOMEBREW_NO_REQUIRE_TAP_TRUST` —— 后者已被上游标记为废弃并将移除。
 
 ## 自动更新机制
 
-应用会检查 `https://github.com/mose-x/svc/releases/latest/download/version.json`（配置在 [about.json](about.json)）。每个 release 附带描述各平台下载链接和 SHA256 校验和的 `version.json`，以及独立的 `sha256sums.txt`。
+不需要任何清单文件。应用请求 [about.json](about.json) 里 `updateUrl` 指向的 GitHub Releases API（`https://api.github.com/repos/mose-x/svc/releases/latest`），去掉结尾的 `/latest` 以便按创建时间倒序读取 release **列表**，再从 `tag_name` 取版本、从 `body` 取更新日志、从 `assets[]` 取下载地址。带预发布后缀的 tag（`-rc1`、`-beta`、`-alpha`、`-pre`、`-dev`）会被跳过，因此只会推送纯 `vX.Y.Z`，与 GitHub 自己是否标为 pre-release 无关。每个 release 还会附带独立的 `sha256sums.txt`。
 
 ### 更新流程
 
-1. **检查**：应用内「检查更新」拉取 `version.json`，按语义化版本比较。
+1. **检查**：应用内「检查更新」读取 release 列表，选出最新的稳定 tag，与当前运行版本按语义化版本比较。
 2. **下载**：用户点「下载并安装」；新二进制下载到临时路径，实时显示进度，应用配置的 GitHub 镜像和代理。
-3. **校验**：计算下载文件的 SHA256，与 `version.json` 中的值比对。不匹配则删除临时文件并中止更新（防御 CDN 篡改或下载不完整）。
-4. **应用**：生成 shell/batch 脚本，等待应用退出 → 备份当前二进制到 `<exe>.bak` → 替换为新版本 → 重启。
+3. **校验**：按文件名在该 release 的 `sha256sums.txt` 资源里查出期望摘要，与实际下载到的文件算出的 SHA256 比对。不匹配则删除临时文件并中止更新（防御 CDN 篡改或下载不完整）。如果某个 release 没有 `sha256sums.txt`，则记录一条警告并跳过校验，这样老版本依然可以更新。
+4. **应用**：生成 shell/batch 脚本，等待应用退出 → 备份当前二进制到 `<exe>.bak` → 替换为新版本 → 重启。在 macOS 上还会重写 bundle 内 `Info.plist` 的 `CFBundleShortVersionString` 和 `CFBundleVersion` —— 只换二进制的话这两个值会留在旧版本上。
 5. **回滚**（可选）：新版本出问题时，设置页的「回滚」通过同样的等待-替换-重启模式恢复 `<exe>.bak`。一次性 —— `.bak` 始终指向紧邻的上一版本。
 
-### version.json 格式
+### 资源选择
 
-完整示例见 [version.json.example](version.json.example)。`downloads` 的 map key 是 `<runtime.GOOS>-<runtime.GOARCH>`（如 `windows-amd64`、`darwin-arm64`）—— Go 的 GOARCH 是 `amd64` 不是 `x64`，尽管产物文件名用 `x64`。
+`matchPlatformAsset` 按文件名从 `assets[]` 里挑出当前平台的资源，遵循 `svc-<ver>-<os>-<arch><ext>` 的构建约定。Go 的两个取值都不能直接匹配文件名：`runtime.GOOS` 的 `darwin` 对应 `macos`，`runtime.GOARCH` 的 `amd64` 对应 `x64`。
 
-```json
-{
-  "version": "1.0.0",
-  "changelog": "Release v1.0.0 — 详情见 ...",
-  "downloads": {
-    "windows-amd64": {
-      "url": ".../svc-1.0.0-windows-x64.exe",
-      "filename": "svc-1.0.0-windows-x64.exe",
-      "sha256": "abc123..."
-    },
-    "darwin-arm64": {
-      "url": ".../svc-1.0.0-macos-arm64.bin",
-      "filename": "svc",
-      "sha256": "def456..."
-    }
-  }
-}
-```
+| 平台 | 自更新用的资源 | 有意跳过的 |
+| --- | --- | --- |
+| Windows x64 / arm64 | `svc-<ver>-windows-x64.exe`、`svc-<ver>-windows-arm64.exe` | `*-installer.exe` —— 仅用于首次安装，且运行它需要 UAC |
+| macOS x64 / arm64 | `svc-<ver>-macos-x64.bin`、`svc-<ver>-macos-arm64.bin` | `.dmg` |
+| Linux x64 / arm64 | `svc-<ver>-linux-x64`、`svc-<ver>-linux-arm64` | `.deb`、`.rpm` |
 
 > macOS 自更新用 `.bin`（裸二进制），因为 `ApplyUpdate` 替换的是 `.app` bundle 内的二进制，不是 bundle 本身。`.dmg` 仅用于手动安装。
 
@@ -252,7 +241,7 @@ git tag v1.1.0
 git push origin v1.1.0
 ```
 
-[build.yml](.github/workflows/build.yml) workflow 会构建全部 6 个平台产物，生成 `sha256sums.txt` 和 `version.json`，并发布非草稿 GitHub Release。应用内更新器通过 `releases/latest/download/version.json` 立即感知。
+[build.yml](.github/workflows/build.yml) workflow 会构建全部 6 个平台产物，生成 `sha256sums.txt`，并发布非草稿 GitHub Release。应用内更新器通过 Releases API 立即感知。带预发布后缀的 tag 会被发布为 GitHub pre-release，因此同样不会进入 `releases/latest`。
 
 ## License
 

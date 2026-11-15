@@ -132,10 +132,9 @@ svc/
 │   │   └── types/             # TypeScript type definitions
 │   └── wailsjs/               # Auto-generated Wails bindings
 ├── winres/                    # Windows resource (icon, manifest)
-├── .github/workflows/
-│   ├── ci.yml                 # lint + test + commit-lint on PR
-│   └── build.yml              # 6-platform build + release on tag push
-└── version.json.example       # Sample version.json for self-update
+└── .github/workflows/
+    ├── ci.yml                 # lint + test + commit-lint on PR
+    └── build.yml              # 6-platform build + release on tag push
 ```
 
 ## Data Storage
@@ -196,50 +195,40 @@ sha256sum -c sha256sums.txt --ignore-missing
 ### Homebrew (macOS)
 
 ```bash
+brew trust mose-x/tap
 brew tap mose-x/tap
 brew install --cask mose-x/tap/svc
 ```
 
-Installs the `.dmg` of the latest release into `/Applications`. The cask lives in [mose-x/homebrew-tap](https://github.com/mose-x/homebrew-tap), where a daily workflow rewrites the version and recomputes every `sha256` from the published release assets.
+Installs the `.dmg` of the latest release into `/Applications`. The cask lives in [mose-x/homebrew-tap](https://github.com/mose-x/homebrew-tap), where a daily workflow rewrites the version and recomputes every `sha256` from the published release assets. Homebrew is optional: the direct download in [Installation](#installation) needs none of this.
 
 `brew info --cask mose-x/tap/svc` prints the caveats: the app is not code signed (right-click → Open on first launch), and uninstalling keeps `~/.svc` plus the `source ~/.svc.rc` line in your shell rc.
 
-Homebrew 6 does not load a third-party tap's entries until that tap is trusted. The fully qualified name above always works; to use the short form (`brew install --cask svc`) as well, run `brew trust mose-x/tap` once — `brew untrust mose-x/tap` undoes it.
+Homebrew 7 refuses to load *any* entry of an untrusted third-party tap, the fully qualified name above included, which is why `brew trust mose-x/tap` comes first. It is idempotent and does not need the tap to exist yet, so that order is also correct on a machine that has never seen it. Homebrew 6 only required trust for the short form (`brew install --cask svc`); `brew untrust mose-x/tap` undoes it on either.
+
+Trust is recorded per user in `~/.homebrew/trust.json` (`$XDG_CONFIG_HOME/homebrew/trust.json` when that is set), not inside the tap, so it survives `brew untap`/`brew tap` and `brew update` — but a fresh Homebrew install, a new machine or another macOS account has to run it once more. `brew trust` itself needs Homebrew 5.1.15 or newer; older releases neither enforce trust nor ship the command. Until it runs, `brew tap-info mose-x/tap` reports `Untrusted`, which is expected and harmless. Prefer it over `HOMEBREW_NO_REQUIRE_TAP_TRUST`, which upstream has deprecated and slated for removal.
 
 ## Self-Update Mechanism
 
-The app checks `https://github.com/mose-x/svc/releases/latest/download/version.json` (configured in [about.json](about.json)). Each release ships a `version.json` describing per-platform download URLs and SHA256 checksums, plus a standalone `sha256sums.txt`.
+There is no manifest to fetch. The app queries the GitHub Releases API at the `updateUrl` in [about.json](about.json) (`https://api.github.com/repos/mose-x/svc/releases/latest`), dropping the trailing `/latest` so it can read the release **list** newest-first, and takes the version from `tag_name`, the changelog from `body` and the download URL from `assets[]`. Any tag carrying a pre-release suffix (`-rc1`, `-beta`, `-alpha`, `-pre`, `-dev`) is skipped, so only a plain `vX.Y.Z` is ever offered, no matter how GitHub itself flagged the release. Each release also ships a standalone `sha256sums.txt`.
 
 ### Update Flow
 
-1. **Check**: In-app "Check for Updates" fetches `version.json` and compares versions semantically.
+1. **Check**: In-app "Check for Updates" reads the release list, picks the newest stable tag and compares it with the running version semantically.
 2. **Download**: User clicks "Download & Install"; the new binary is downloaded to a temp path with real-time progress, applying the configured GitHub mirror and proxy.
-3. **Verify**: SHA256 of the downloaded file is computed and compared against the value in `version.json`. On mismatch the temp file is deleted and the update aborts (defense against CDN tampering or partial downloads).
-4. **Apply**: A shell/batch script is spawned that waits for the app to exit, backs up the current binary to `<exe>.bak`, replaces it with the new one, and relaunches.
+3. **Verify**: the expected digest is looked up by filename in that release's `sha256sums.txt` asset and compared with the SHA256 of what actually landed. On mismatch the temp file is deleted and the update aborts (defense against CDN tampering or partial downloads). A release without `sha256sums.txt` logs a warning and skips verification, so older releases stay updatable.
+4. **Apply**: A shell/batch script is spawned that waits for the app to exit, backs up the current binary to `<exe>.bak`, replaces it with the new one, and relaunches. On macOS it also re-stamps `CFBundleShortVersionString` and `CFBundleVersion` in the bundle's `Info.plist`, which swapping the binary alone leaves behind.
 5. **Rollback** (optional): If the new version misbehaves, "Rollback" in Settings restores `<exe>.bak` via the same wait-replace-relaunch pattern. One-shot — `.bak` always holds the immediately previous version.
 
-### version.json Schema
+### Asset Selection
 
-See [version.json.example](version.json.example) for a full sample. The `downloads` map keys are `<runtime.GOOS>-<runtime.GOARCH>` (e.g. `windows-amd64`, `darwin-arm64`) — Go's GOARCH is `amd64`, not `x64`, even though the asset filename uses `x64`.
+`matchPlatformAsset` picks the asset for the running platform out of `assets[]` by filename, following the `svc-<ver>-<os>-<arch><ext>` build convention. Neither Go token matches the asset name literally: `runtime.GOOS` `darwin` maps to `macos` and `runtime.GOARCH` `amd64` maps to `x64`.
 
-```json
-{
-  "version": "1.0.0",
-  "changelog": "Release v1.0.0 — see ... for details",
-  "downloads": {
-    "windows-amd64": {
-      "url": ".../svc-1.0.0-windows-x64.exe",
-      "filename": "svc-1.0.0-windows-x64.exe",
-      "sha256": "abc123..."
-    },
-    "darwin-arm64": {
-      "url": ".../svc-1.0.0-macos-arm64.bin",
-      "filename": "svc",
-      "sha256": "def456..."
-    }
-  }
-}
-```
+| Platform | Self-update asset | Skipped on purpose |
+| --- | --- | --- |
+| Windows x64 / arm64 | `svc-<ver>-windows-x64.exe`, `svc-<ver>-windows-arm64.exe` | `*-installer.exe` — first-install only, and running it would need UAC |
+| macOS x64 / arm64 | `svc-<ver>-macos-x64.bin`, `svc-<ver>-macos-arm64.bin` | `.dmg` |
+| Linux x64 / arm64 | `svc-<ver>-linux-x64`, `svc-<ver>-linux-arm64` | `.deb`, `.rpm` |
 
 > macOS uses the `.bin` (bare executable) for self-update because `ApplyUpdate` replaces the binary inside the `.app` bundle, not the bundle itself. The `.dmg` is for manual install only.
 
@@ -252,7 +241,7 @@ git tag v1.1.0
 git push origin v1.1.0
 ```
 
-The [build.yml](.github/workflows/build.yml) workflow will build all six platform assets, generate `sha256sums.txt` and `version.json`, and publish a non-draft GitHub Release. The in-app updater picks it up immediately via `releases/latest/download/version.json`.
+The [build.yml](.github/workflows/build.yml) workflow builds all six platform assets, generates `sha256sums.txt` and publishes a non-draft GitHub Release. The in-app updater picks it up immediately from the Releases API. Tags carrying a pre-release suffix are published as a GitHub pre-release, which also keeps them out of `releases/latest`.
 
 ## License
 
