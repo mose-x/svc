@@ -193,6 +193,15 @@ Wails v2 不支持交叉编译 Linux（CGO 链接 webkit2gtk/gtk），Linux ARM6
 sha256sum -c sha256sums.txt --ignore-missing
 ```
 
+### Homebrew（macOS）
+
+```bash
+brew tap mose-x/tap
+brew install --cask mose-x/tap/svc
+```
+
+cask 位于 [mose-x/tap](https://github.com/mose-x/homebrew-tap)，由定时工作流自动跟随每一个新 release。注意事项见 `brew info --cask mose-x/tap/svc`：应用未签名（首次启动需右键 → 打开），卸载后会保留 `~/.svc` 以及 shell 配置里的 `source ~/.svc.rc` 这一行。
+
 ## 自动更新机制
 
 应用会检查 `https://github.com/mose-x/svc/releases/latest/download/version.json`（配置在 [about.json](about.json)）。每个 release 附带描述各平台下载链接和 SHA256 校验和的 `version.json`，以及独立的 `sha256sums.txt`。
