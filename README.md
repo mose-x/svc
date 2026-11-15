@@ -200,7 +200,11 @@ brew tap mose-x/tap
 brew install --cask mose-x/tap/svc
 ```
 
-The cask lives in [mose-x/tap](https://github.com/mose-x/homebrew-tap) and is re-pointed at every new release by a scheduled workflow. `brew info --cask mose-x/tap/svc` prints the caveats: the app is not code signed (right-click → Open on first launch), and uninstalling keeps `~/.svc` plus the `source ~/.svc.rc` line in your shell rc.
+Installs the `.dmg` of the latest release into `/Applications`. The cask lives in [mose-x/homebrew-tap](https://github.com/mose-x/homebrew-tap), where a daily workflow rewrites the version and recomputes every `sha256` from the published release assets.
+
+`brew info --cask mose-x/tap/svc` prints the caveats: the app is not code signed (right-click → Open on first launch), and uninstalling keeps `~/.svc` plus the `source ~/.svc.rc` line in your shell rc.
+
+Homebrew 6 does not load a third-party tap's entries until that tap is trusted. The fully qualified name above always works; to use the short form (`brew install --cask svc`) as well, run `brew trust mose-x/tap` once — `brew untrust mose-x/tap` undoes it.
 
 ## Self-Update Mechanism
 
