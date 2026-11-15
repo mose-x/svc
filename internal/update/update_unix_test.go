@@ -4,7 +4,9 @@ package update
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -208,5 +210,231 @@ func TestSecureUpdatePayload_MissingFile(t *testing.T) {
 	if err == nil {
 		os.Remove(secure)
 		t.Fatal("secureUpdatePayload should fail when the payload does not exist")
+	}
+}
+
+// --- macOS bundle version sync ---
+
+// writeFakeSvcBinary writes an executable that answers `version` with
+// "svc <ver>", standing in for the real binary so the tests need no build.
+func writeFakeSvcBinary(t *testing.T, path, ver string) {
+	t.Helper()
+	body := "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'svc " + ver + "'; fi\n"
+	if err := os.WriteFile(path, []byte(body), 0755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runSh(t *testing.T, snippet string) {
+	t.Helper()
+	out, err := exec.Command("/bin/sh", "-c", snippet).CombinedOutput()
+	if err != nil {
+		t.Fatalf("sh -c failed: %v\n--- output ---\n%s", err, out)
+	}
+}
+
+func plistValue(t *testing.T, plist, key string) string {
+	t.Helper()
+	out, err := exec.Command("/usr/libexec/PlistBuddy", "-c", "Print :"+key, plist).Output()
+	if err != nil {
+		t.Fatalf("PlistBuddy Print :%s: %v", key, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// fakeAppBundle builds <dir>/svc.app/Contents/{MacOS/svc,Info.plist} with both
+// version keys still at the version the "dmg" shipped, and returns the paths
+// of the binary and the plist.
+func fakeAppBundle(t *testing.T, staleVersion string) (exe, plist string) {
+	t.Helper()
+	macOS := filepath.Join(t.TempDir(), "svc.app", "Contents", "MacOS")
+	if err := os.MkdirAll(macOS, 0755); err != nil {
+		t.Fatal(err)
+	}
+	exe = filepath.Join(macOS, "svc")
+	writeFakeSvcBinary(t, exe, "9.9.9")
+	plist = filepath.Join(macOS, "..", "Info.plist")
+	body := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>svc</string>
+    <key>CFBundleShortVersionString</key>
+    <string>` + staleVersion + `</string>
+    <key>CFBundleVersion</key>
+    <string>` + staleVersion + `</string>
+</dict>
+</plist>
+`
+	if err := os.WriteFile(plist, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return exe, plist
+}
+
+// TestBuildBundleVersionSync pins the shape of the snippet: the version is read
+// back from the binary that just landed (never interpolated from Go), both
+// bundle keys are stamped, and the value is charset-checked before it reaches
+// PlistBuddy. The plist and PlistBuddy guards are what make it a no-op on
+// Linux, where the installed binary has no bundle around it.
+func TestBuildBundleVersionSync(t *testing.T) {
+	snippet := buildBundleVersionSync(shellQuote("/Applications/svc.app/Contents/MacOS/svc"))
+	for _, want := range []string{
+		`plist="$(dirname '/Applications/svc.app/Contents/MacOS/svc')/../Info.plist"`,
+		`[ -f "$plist" ]`,
+		`[ -x /usr/libexec/PlistBuddy ]`,
+		`'/Applications/svc.app/Contents/MacOS/svc' version`,
+		"CFBundleShortVersionString",
+		"CFBundleVersion",
+		`*[!A-Za-z0-9._+-]*) new_ver=""`,
+	} {
+		if !strings.Contains(snippet, want) {
+			t.Errorf("buildBundleVersionSync missing %q\n--- snippet ---\n%s", want, snippet)
+		}
+	}
+}
+
+// TestBuildBundleVersionSync_QuotesHostilePaths: the exe path is interpolated
+// only through the caller's shellQuote, so a path with spaces and quotes stays
+// a single argument.
+func TestBuildBundleVersionSync_QuotesHostilePaths(t *testing.T) {
+	hostile := `/tmp/o'halloran/svc app/Contents/MacOS/svc`
+	snippet := buildBundleVersionSync(shellQuote(hostile))
+	want := shellQuote(hostile) + " version"
+	if !strings.Contains(snippet, want) {
+		t.Errorf("snippet does not quote the hostile path; want substring %q\n--- snippet ---\n%s", want, snippet)
+	}
+}
+
+// TestBundleVersionSync_NoOpOutsideAppBundle runs on every Unix CI host: with
+// no Info.plist next to the binary's parent the snippet must exit 0 and touch
+// nothing, which is what keeps the shared Linux update path unaffected.
+func TestBundleVersionSync_NoOpOutsideAppBundle(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "svc")
+	writeFakeSvcBinary(t, exe, "9.9.9")
+
+	runSh(t, "set -e\n"+buildBundleVersionSync(shellQuote(exe)))
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("snippet created files next to a bare binary: %v; want only the binary", names)
+	}
+}
+
+// TestBundleVersionSync_StampsInfoPlist is the end-to-end half on the only
+// platform that has both a bundle and PlistBuddy.
+func TestBundleVersionSync_StampsInfoPlist(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Info.plist stamping is macOS-only")
+	}
+	if _, err := os.Stat("/usr/libexec/PlistBuddy"); err != nil {
+		t.Skip("PlistBuddy unavailable")
+	}
+	exe, plist := fakeAppBundle(t, "2.0.2-rc1")
+
+	runSh(t, buildBundleVersionSync(shellQuote(exe)))
+
+	for _, key := range []string{"CFBundleShortVersionString", "CFBundleVersion"} {
+		if got := plistValue(t, plist, key); got != "9.9.9" {
+			t.Errorf("%s = %q; want the version the binary reports (9.9.9)", key, got)
+		}
+	}
+	if got := plistValue(t, plist, "CFBundleName"); got != "svc" {
+		t.Errorf("unrelated key CFBundleName = %q; want svc (only the version keys may change)", got)
+	}
+}
+
+// TestBundleVersionSync_RejectsHostileVersionOutput proves the charset filter:
+// a binary whose `version` output carries shell metacharacters must leave the
+// plist alone instead of injecting into the PlistBuddy command line.
+func TestBundleVersionSync_RejectsHostileVersionOutput(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Info.plist stamping is macOS-only")
+	}
+	if _, err := os.Stat("/usr/libexec/PlistBuddy"); err != nil {
+		t.Skip("PlistBuddy unavailable")
+	}
+	dir := t.TempDir()
+	macOS := filepath.Join(dir, "svc.app", "Contents", "MacOS")
+	if err := os.MkdirAll(macOS, 0755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(dir, "injected")
+	exe := filepath.Join(macOS, "svc")
+	hostile := "#!/bin/sh\necho 'svc 1.0;touch " + marker + "'\n"
+	if err := os.WriteFile(exe, []byte(hostile), 0755); err != nil {
+		t.Fatal(err)
+	}
+	plist := filepath.Join(macOS, "..", "Info.plist")
+	stale := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleShortVersionString</key>
+    <string>2.0.2-rc1</string>
+    <key>CFBundleVersion</key>
+    <string>2.0.2-rc1</string>
+</dict>
+</plist>
+`
+	if err := os.WriteFile(plist, []byte(stale), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runSh(t, buildBundleVersionSync(shellQuote(exe)))
+
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("hostile `version` output reached the shell; the charset filter must blank it")
+	}
+	if got := plistValue(t, plist, "CFBundleShortVersionString"); got != "2.0.2-rc1" {
+		t.Errorf("CFBundleShortVersionString = %q; want it left alone for an unusable version", got)
+	}
+}
+
+// TestBuildUnixUpdateScript_SyncsBundleVersion pins the placement: the stamp
+// must run after the checksum verify (never on a payload that failed it) and
+// before the relaunch, so LaunchServices sees the new version at launch.
+func TestBuildUnixUpdateScript_SyncsBundleVersion(t *testing.T) {
+	exe := "/Applications/svc.app/Contents/MacOS/svc"
+	script := buildUnixUpdateScript(1, exe, exe+".bak", "/tmp/payload", "abc")
+
+	verify := strings.Index(script, "Verifying integrity")
+	stamp := strings.Index(script, "Info.plist")
+	relaunch := strings.Index(script, "Starting new version")
+	if verify < 0 || stamp < 0 || relaunch < 0 {
+		t.Fatalf("update script is missing a stage (verify=%d plist=%d relaunch=%d)\n--- script ---\n%s",
+			verify, stamp, relaunch, script)
+	}
+	if !(verify < stamp && stamp < relaunch) {
+		t.Errorf("Info.plist sync must sit between the checksum verify and the relaunch (verify=%d plist=%d relaunch=%d)\n--- script ---\n%s",
+			verify, stamp, relaunch, script)
+	}
+}
+
+// TestBuildUnixRollbackScript_SyncsBundleVersion: a rollback restores the .bak
+// binary, so the bundle must go back to the version that binary reports too.
+func TestBuildUnixRollbackScript_SyncsBundleVersion(t *testing.T) {
+	exe := "/Applications/svc.app/Contents/MacOS/svc"
+	script := buildUnixRollbackScript(1, exe+".bak", exe)
+
+	restore := strings.Index(script, "Restoring previous version")
+	stamp := strings.Index(script, "Info.plist")
+	relaunch := strings.Index(script, "Starting restored version")
+	if restore < 0 || stamp < 0 || relaunch < 0 {
+		t.Fatalf("rollback script is missing a stage (restore=%d plist=%d relaunch=%d)\n--- script ---\n%s",
+			restore, stamp, relaunch, script)
+	}
+	if !(restore < stamp && stamp < relaunch) {
+		t.Errorf("Info.plist sync must sit between the restore and the relaunch (restore=%d plist=%d relaunch=%d)\n--- script ---\n%s",
+			restore, stamp, relaunch, script)
 	}
 }
