@@ -162,6 +162,18 @@ func Interpolate(text string, params map[string]string) string {
 	})
 }
 
+// ErrorCode extracts the apperr code from a marker, reporting whether raw is a
+// marker at all. Shells need the code itself, not only the rendered text: it is
+// what selects the process exit code. It applies the same grammar as
+// RenderErrorText, so the two can never disagree about what counts as a marker.
+func ErrorCode(raw string) (string, bool) {
+	match := svcErrorRE.FindStringSubmatch(raw)
+	if match == nil {
+		return "", false
+	}
+	return match[1], true
+}
+
 // RenderError translates a backend error into user-facing text.
 //
 // The backend has no localization layer: internal/apperr emits a

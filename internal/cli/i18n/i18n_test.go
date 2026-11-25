@@ -266,3 +266,58 @@ func TestApperrPatternMatchesTheFrontend(t *testing.T) {
 		t.Error("the code character class must stay [a-z0-9-]")
 	}
 }
+
+func TestErrorCode(t *testing.T) {
+	cases := []struct {
+		raw      string
+		wantCode string
+		wantOK   bool
+	}{
+		{`[svc:no-backup]`, "no-backup", true},
+		{`[svc:unknown-sdk-type]{"sdk":"go"}`, "unknown-sdk-type", true},
+		{"[svc:exec-failed]{\"cmd\":\"x\",\n\"y\":\"z\"}", "exec-failed", true},
+		{`[svc:not-a-real-code]`, "not-a-real-code", true},
+		{`prefix [svc:no-backup]`, "", false},
+		{`[svc:No-Backup]`, "", false},
+		{`[svc:]`, "", false},
+		{"plain text", "", false},
+		{"", "", false},
+	}
+	for _, c := range cases {
+		code, ok := ErrorCode(c.raw)
+		if ok != c.wantOK || code != c.wantCode {
+			t.Errorf("ErrorCode(%q) = (%q, %v), want (%q, %v)", c.raw, code, ok, c.wantCode, c.wantOK)
+		}
+	}
+}
+
+// TestErrorCodeAgreesWithRenderError pins the two marker readers together: a
+// string RenderErrorText translates must be one ErrorCode recognises, and vice
+// versa. A shell picks its exit code from ErrorCode and its message from
+// RenderErrorText, so a disagreement would mean a translated message exiting
+// with the generic failure code.
+func TestErrorCodeAgreesWithRenderError(t *testing.T) {
+	c := newMini(t, "zh")
+	translatable := []string{
+		`[svc:unknown-sdk-type]{"sdk":"go"}`,
+		`[svc:no-backup]`,
+		`[svc:exec-failed]{"cmd":"cargo"}`,
+	}
+	for _, raw := range translatable {
+		if _, ok := ErrorCode(raw); !ok {
+			t.Errorf("ErrorCode did not recognise %q", raw)
+		}
+		if got := c.RenderErrorText(raw); got == raw {
+			t.Errorf("RenderErrorText left %q untranslated", raw)
+		}
+	}
+	// Not markers: neither half may treat them as one.
+	for _, raw := range []string{`prefix [svc:no-backup]`, "dial tcp: refused", ""} {
+		if _, ok := ErrorCode(raw); ok {
+			t.Errorf("ErrorCode treated %q as a marker", raw)
+		}
+		if got := c.RenderErrorText(raw); got != raw {
+			t.Errorf("RenderErrorText altered the non-marker %q into %q", raw, got)
+		}
+	}
+}
