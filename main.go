@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"svc/internal/cli"
 	"svc/internal/config"
 	"svc/internal/logger"
 	"svc/internal/shim"
@@ -27,22 +28,35 @@ func main() {
 		return
 	}
 
-	// 2. CLI subcommands (e.g. "svc init") run without launching the GUI.
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "init", "setup":
-			runInitCLI()
-			return
-		case "version", "-v", "--version":
-			printVersion()
-			return
-		case "help", "-h", "--help":
-			printHelp()
-			return
-		}
+	// 2. Everything else is decided by cli.Dispatch: the four commands that
+	//    predate the CLI keep their original code path and their original
+	//    output, the command tree gets the rest, and no arguments at all still
+	//    launches the GUI.
+	switch cli.Dispatch(os.Args[1:]) {
+	case cli.KindLegacyInit:
+		runInitCLI()
+	case cli.KindLegacyVersion:
+		printVersion()
+	case cli.KindLegacyHelp:
+		printHelp()
+	case cli.KindCommand:
+		os.Exit(cli.Execute(cli.ExecuteInput{
+			Args:      os.Args[1:],
+			Catalogs:  cliCatalogs(),
+			AboutJSON: aboutJSON,
+			Stdin:     os.Stdin,
+			Stdout:    os.Stdout,
+			Stderr:    os.Stderr,
+		}))
+	default:
+		runGUI()
 	}
+}
 
-	// 3. Default: launch the Wails GUI application.
+// runGUI launches the Wails application. It stays the default for `svc` with no
+// arguments, which is the one behaviour of the original dispatcher that the CLI
+// must not change.
+func runGUI() {
 	app := NewApp()
 
 	// Match the native window background to the saved theme so the frame shown
@@ -92,8 +106,12 @@ func runInitCLI() {
 		os.Exit(1)
 	}
 
-	// Honour a custom install path saved in settings.json
-	sm := config.NewSettingsManager(cfg.SvcDir())
+	// Honour a custom install path saved in settings.json. settings.json lives
+	// at the fixed <home>/.svc location regardless of any custom install path
+	// -- the shim runtime reads it from there to discover that path -- so this
+	// is HomeDir(), not SvcDir(). With SvcDir() the manager looked in
+	// ~/.svc/.svc/ for a default install and silently ignored every custom one.
+	sm := config.NewSettingsManager(cfg.HomeDir())
 	if s := sm.Get(); s.InstallPath != "" {
 		cfg.SetSvcDir(s.InstallPath)
 	}

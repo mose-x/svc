@@ -53,6 +53,11 @@ const (
 	SchemeNotAllowed      Code = "scheme-not-allowed"
 	InvalidPackageName    Code = "invalid-package-name"
 	ProtectedPackage      Code = "protected-package"
+	// CliNoDialog is raised by the CLI runtime when a service asks for a
+	// file or directory picker. A terminal has no picker, and falling back
+	// to a GUI dialog from a headless command is exactly the popup the CLI
+	// contract forbids.
+	CliNoDialog Code = "cli-no-dialog"
 )
 
 // New builds the marked error. params may be nil; values are interpolated

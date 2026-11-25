@@ -89,6 +89,13 @@ type Home struct {
 	Proxy       *proxy.Service
 	SettingsSvc *settings.Service
 	AppInfo     update.AppInfo
+
+	// InstallPathOverride forces the SVC data directory for this process,
+	// taking precedence over the InstallPath saved in settings.json. The CLI
+	// sets it from --install-path so a one-off command can operate on another
+	// home; the GUI leaves it empty. Bootstrap applies it, and nothing ever
+	// writes it back to settings.json.
+	InstallPathOverride string
 }
 
 // Core is the fully assembled service graph handed to a shell.
@@ -155,11 +162,18 @@ func (h *Home) Bootstrap(ctx context.Context, rt wailsrt.Runtime, lvl Level) (*C
 		return nil, fmt.Errorf("appcore: Bootstrap needs LevelRead or LevelWrite, got %s", lvl)
 	}
 
-	// Honour a custom install path saved in settings.json. Everything below
-	// derives paths from SvcDir(), so this has to come first.
-	if s := h.Settings.Get(); s.InstallPath != "" {
-		logger.Info("Using custom install path: %s", s.InstallPath)
-		h.Cfg.SetSvcDir(s.InstallPath)
+	// Honour an install-path override. Everything below derives paths from
+	// SvcDir(), so this has to come first. A shell-supplied override (--install-path)
+	// beats the value saved in settings.json: an explicit command-line choice
+	// is more recent and more specific than a stored preference, and letting
+	// the stored one win would make the flag silently do nothing.
+	installPath := h.InstallPathOverride
+	if installPath == "" {
+		installPath = h.Settings.Get().InstallPath
+	}
+	if installPath != "" {
+		logger.Info("Using custom install path: %s", installPath)
+		h.Cfg.SetSvcDir(installPath)
 	}
 
 	core := &Core{Home: h, RT: rt}
