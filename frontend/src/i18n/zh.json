@@ -296,6 +296,7 @@
     "http-status": "HTTP 状态码 {{status}}",
     "scheme-not-allowed": "仅支持 http/https URL，当前协议：{{scheme}}",
     "invalid-package-name": "无效的 npm 包名：{{name}}",
-    "protected-package": "{{name}} 为受保护包，无法卸载"
+    "protected-package": "{{name}} 为受保护包，无法卸载",
+    "cli-no-dialog": "命令行模式下无法打开文件选择对话框，请直接以参数形式传入路径"
   }
 }

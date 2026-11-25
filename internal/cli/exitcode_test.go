@@ -103,6 +103,7 @@ func TestExitCodeForCode(t *testing.T) {
 		{"managed-dir", ExitUsage},
 		{"jdk-required", ExitUsage},
 		{"protected-package", ExitUsage},
+		{"cli-no-dialog", ExitUsage},
 		{"invalid-package-name", ExitUsage},
 		{"exec-failed", ExitError},
 		{"exec-timeout", ExitError},
@@ -142,6 +143,17 @@ func TestExitCodeForError(t *testing.T) {
 		{"context deadline is not a cancellation", context.DeadlineExceeded, ExitError},
 		{"marker wins over cancellation", errors.Join(context.Canceled, corrupt), ExitIntegrity},
 		{"empty wrapped chain", fmt.Errorf("boom: %w", errors.New("cause")), ExitError},
+
+		// The shell's own refusals are recognised ahead of any marker inside
+		// them: how the command was written outranks what it happened to wrap.
+		{"usage error", &UsageError{errors.New(`unknown flag: --jsonn`)}, ExitUsage},
+		{"usage error wrapping a marker", &UsageError{marker}, ExitUsage},
+		{"wrapped usage error", fmt.Errorf("parse: %w", &UsageError{errNoCommand}), ExitUsage},
+		{"confirmation required", ErrConfirmationRequired, ExitUsage},
+		{"wrapped confirmation required", fmt.Errorf("uninstall go: %w", ErrConfirmationRequired), ExitUsage},
+		{"confirmation aborted", ErrConfirmationAborted, ExitCanceled},
+		{"wrapped confirmation aborted", fmt.Errorf("uninstall go: %w", ErrConfirmationAborted), ExitCanceled},
+		{"aborted wins over a joined marker", errors.Join(ErrConfirmationAborted, corrupt), ExitCanceled},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

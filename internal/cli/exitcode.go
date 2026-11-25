@@ -85,6 +85,7 @@ var codeExitCodes = map[string]int{
 	"unknown-package-manager": ExitUsage,
 	"invalid-package-name":    ExitUsage,
 	"protected-package":       ExitUsage,
+	"cli-no-dialog":           ExitUsage,
 
 	// Error: a genuine failure that is not one of the classes above.
 	"app-not-initialized": ExitError,
@@ -112,9 +113,25 @@ func ExitCodeForCode(code string) int {
 // branches -- and the first marker found decides. context.Canceled is mapped
 // too, because SIGINT reaches services as a cancelled context and "the user
 // stopped it" must not exit 1.
+//
+// The shell's own sentinels are recognised ahead of everything else: a usage
+// mistake is exit 2 whatever else happens to be wrapped inside it, and a prompt
+// the user walked away from is a cancellation rather than a failure.
 func ExitCodeForError(err error) int {
 	if err == nil {
 		return ExitOK
+	}
+	// The shell's own refusals first: they are about how the command was
+	// written, and a wrapped marker underneath must not upgrade them.
+	var usage *UsageError
+	if errors.As(err, &usage) {
+		return ExitUsage
+	}
+	if errors.Is(err, ErrConfirmationRequired) {
+		return ExitUsage
+	}
+	if errors.Is(err, ErrConfirmationAborted) {
+		return ExitCanceled
 	}
 	if code, ok := firstMarkerCode(err); ok {
 		return ExitCodeForCode(code)
@@ -129,19 +146,32 @@ func ExitCodeForError(err error) int {
 // returns its code. Depth-first matters: the outermost wrap is prose added by
 // the caller and never a marker itself, while the innermost cause is.
 func firstMarkerCode(err error) (string, bool) {
+	marker, ok := firstMarker(err)
+	if !ok {
+		return "", false
+	}
+	return i18n.ErrorCode(marker)
+}
+
+// firstMarker is the same walk, returning the message of the node that is
+// itself a bare marker. Rendering needs the whole marker -- code and params --
+// where the exit code only needs the code, and the two must agree about which
+// node in the tree is the failure, so they share one walk.
+func firstMarker(err error) (string, bool) {
 	if err == nil {
 		return "", false
 	}
-	if code, ok := i18n.ErrorCode(err.Error()); ok {
-		return code, true
+	text := err.Error()
+	if _, ok := i18n.ErrorCode(text); ok {
+		return text, true
 	}
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
 		for _, sub := range joined.Unwrap() {
-			if code, ok := firstMarkerCode(sub); ok {
-				return code, true
+			if marker, ok := firstMarker(sub); ok {
+				return marker, true
 			}
 		}
 		return "", false
 	}
-	return firstMarkerCode(errors.Unwrap(err))
+	return firstMarker(errors.Unwrap(err))
 }

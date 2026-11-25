@@ -255,6 +255,52 @@ func TestBootstrapHonoursCustomInstallPath(t *testing.T) {
 	}
 }
 
+// TestBootstrapInstallPathOverrideBeatsSettings covers --install-path: a
+// shell-supplied override must win over the InstallPath saved in settings.json,
+// otherwise the flag would silently do nothing for every user who has ever
+// picked a custom install path in the GUI.
+func TestBootstrapInstallPathOverrideBeatsSettings(t *testing.T) {
+	var saved, override string
+	h, cfg, _ := newTestHome(t, func(home string) {
+		saved = filepath.Join(home, "saved-install")
+		override = filepath.Join(home, "override-install")
+		for _, dir := range []string{saved, override} {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				t.Fatalf("mkdir %s: %v", dir, err)
+			}
+		}
+		writeSettings(t, home, config.AppSettings{InstallPath: saved})
+	})
+	if saved == "" || override == "" {
+		t.Fatal("the seed callback did not run")
+	}
+	h.InstallPathOverride = override
+
+	if _, err := h.Bootstrap(context.Background(), &fakeRuntime{}, LevelRead); err != nil {
+		t.Fatalf("Bootstrap(LevelRead): %v", err)
+	}
+
+	if got := cfg.SvcDir(); got != override {
+		t.Errorf("SvcDir() = %q, want the override %q (settings.json says %q)", got, override, saved)
+	}
+	if _, err := os.Stat(filepath.Join(override, "mirrors.json")); err != nil {
+		t.Errorf("mirrors.json missing from the override dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(saved, "mirrors.json")); err == nil {
+		t.Error("the override must not leak into the saved install path")
+	}
+
+	// The override is per-process, never persisted: a second Home over a
+	// settings.json that still names `saved` resolves to `saved`.
+	if got := h.Settings.Get().InstallPath; got != saved {
+		t.Errorf("settings.json InstallPath = %q, want it left alone at %q", got, saved)
+	}
+	other, _, _ := newTestHome(t, nil)
+	if other.InstallPathOverride != "" {
+		t.Error("a fresh Home must not inherit an override")
+	}
+}
+
 // TestBootstrapWriteLevelRunsSetup covers the write-only steps: EnsureSetup
 // (shims dir + rc file) and the temp-dir cleanup.
 func TestBootstrapWriteLevelRunsSetup(t *testing.T) {
