@@ -3,6 +3,7 @@ package appcore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,8 +11,27 @@ import (
 	"testing"
 
 	"svc/internal/config"
+	"svc/internal/logger"
 	"svc/internal/wailsrt"
 )
+
+// TestMain pre-empts the logger singleton. NewHome calls logger.Init, which is
+// sync.Once-guarded, so the first caller wins and keeps its log file open for
+// the whole test binary. Left alone, that first caller is whichever test runs
+// first: the log lands inside its t.TempDir(), and on Windows the open handle
+// makes the TempDir cleanup fail with a sharing violation. Removal afterwards
+// is best-effort for the same reason as app_logging_test.go's initAppLogger.
+func TestMain(m *testing.M) {
+	base, err := os.MkdirTemp("", "appcore-test-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "appcore: create temp log dir:", err)
+		os.Exit(1)
+	}
+	logger.Init(base)
+	code := m.Run()
+	_ = os.RemoveAll(base)
+	os.Exit(code)
+}
 
 // fakeRuntime is a minimal wailsrt.Runtime. wailsrt.Fake is declared in a
 // _test.go file, so it is not importable from this package.
