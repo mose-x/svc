@@ -5,10 +5,9 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
-	"path/filepath"
 
+	"svc/internal/appcore"
 	"svc/internal/config"
-	"svc/internal/downloader"
 	"svc/internal/importer"
 	"svc/internal/installer"
 	"svc/internal/logger"
@@ -51,13 +50,14 @@ func logOp(op string, err error) {
 func logCall(op string) { logger.Info("%s", op) }
 
 // App struct - Wails bound core structure. It is a thin facade: all business
-// logic lives in internal service packages; App wires them together and
-// exposes their methods to the Wails frontend.
+// logic lives in internal service packages, assembled by internal/appcore --
+// the same assembly point the CLI uses -- and exposed here to the Wails
+// frontend.
 type App struct {
 	ctx          context.Context
+	home         *appcore.Home
 	cfg          *config.Config
 	registry     *sdk.Registry
-	downloader   *downloader.Downloader
 	pathMgr      pathmgr.PathManager
 	shimMgr      *shimmanager.Manager
 	settings     *config.SettingsManager
@@ -97,97 +97,50 @@ func (r *runtimeAdapter) Quit() { wailsRuntime.Quit(r.ctx) }
 
 // NewApp creates an App instance
 func NewApp() *App {
-	cfg, err := config.NewConfig()
+	home, err := appcore.OpenHome(aboutJSON)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to %v\n", err)
 		os.Exit(1)
 	}
-
-	logger.Init(cfg.SvcDir())
-	logger.Info("Application starting...")
-
-	shimMgr := shimmanager.New(cfg)
-	pathMgr := pathmgr.NewPathManager(cfg)
-	pathMgr.SetShimManager(shimMgr)
-
-	sm := config.NewSettingsManager(cfg.HomeDir())
-	app := &App{
-		cfg:         cfg,
-		settings:    sm,
-		proxySvc:    proxy.New(sm),
-		settingsSvc: settings.New(sm),
-		pathMgr:     pathMgr,
-		shimMgr:     shimMgr,
-		downloader:  downloader.NewDownloader(),
+	return &App{
+		home:        home,
+		cfg:         home.Cfg,
+		settings:    home.Settings,
+		shimMgr:     home.ShimMgr,
+		pathMgr:     home.PathMgr,
+		proxySvc:    home.Proxy,
+		settingsSvc: home.SettingsSvc,
+		appInfo:     home.AppInfo,
 	}
-	app.appInfo = update.ParseAppInfo(aboutJSON)
-	return app
 }
 
 // startup called on application launch
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	s := a.settings.Get()
-	if s.InstallPath != "" {
-		logger.Info("Using custom install path: %s", s.InstallPath)
-		a.cfg.SetSvcDir(s.InstallPath)
-	}
-	a.registry = sdk.NewRegistry(a.cfg, a.settings)
-	logger.Info("SDK registry initialized with %d SDK types", len(a.registry.All()))
-	a.storageMgr = storage.NewManager(a.cfg, a.registry, a.pathMgr, a.shimMgr, a.settings)
 	rt := &runtimeAdapter{ctx: ctx}
-	a.updater = update.NewUpdater(a.appInfo, a.settings, a.downloader, a.proxySvc, rt)
-	a.pkgmgrSvc = pkgmgr.New(a.cfg, a.registry)
-	a.installerSvc = installer.New(a.cfg, a.registry, a.downloader, a.pathMgr, a.shimMgr, a.settings, a.proxySvc, rt)
-	a.importerSvc = importer.New(a.cfg, a.registry, a.pathMgr, a.shimMgr, rt)
 
-	// Seed ~/.svc/mirrors.json (the editable "easter egg" GitHub mirror list)
-	// and point the version cache at ~/.svc/cache. Both must be (re)initialised
-	// after any SetSvcDir override above so the files land in the active SVC dir.
-	sdk.InitMirrorsFile(a.cfg.SvcDir())
-	sdk.InitVersionCacheDir(filepath.Join(a.cfg.SvcDir(), "cache"))
-
-	// One-time shims setup: creates ~/.svc/shims, installs the shim binary,
-	// and adds the single .svc.rc source line (Unix) / shims PATH entry (Windows).
-	// This is the only place SVC ever touches the shell rc or registry PATH.
-	if err := a.shimMgr.EnsureSetup(); err != nil {
-		logger.Warn("Shim setup failed (run 'svc init' to retry): %v", err)
+	// The service graph, the install-path override and the self-heal steps all
+	// come from appcore, so the CLI ends up with exactly the same services --
+	// and produces exactly the same on-disk state -- as the GUI does here.
+	core, err := a.home.Bootstrap(ctx, rt, appcore.LevelWrite)
+	if err != nil {
+		logger.Error("Service bootstrap failed: %v", err)
+		return
 	}
+	a.registry = core.Registry
+	a.storageMgr = core.Storage
+	a.updater = core.Updater
+	a.pkgmgrSvc = core.PkgMgr
+	a.installerSvc = core.Installer
+	a.importerSvc = core.Importer
 
-	// Self-heal the extracted layout of every active SDK version (see
-	// sdk.LayoutHealer). A version installed before a layout fix landed — Rust's
-	// per-component tarball is the case in point — becomes usable again here,
-	// without a reinstall and without the user switching versions.
-	a.installerSvc.HealActiveVersions()
-
-	// Refresh the shims of any SDK whose recorded bin dirs / env vars no longer
-	// match its fetcher, so a component added in a later release reaches PATH
-	// without the user having to switch versions. Runs after the layout heal so
-	// the tree being shimmed is the repaired one.
-	a.installerSvc.RefreshStaleShims()
-
-	// Clean up temp directory
-	if entries, err := os.ReadDir(a.cfg.TmpDir()); err == nil && len(entries) > 0 {
-		logger.Info("Cleaning up %d temporary files from previous run", len(entries))
-		for _, e := range entries {
-			os.RemoveAll(filepath.Join(a.cfg.TmpDir(), e.Name()))
-		}
-	}
-
-	logger.Info("Application startup complete")
-
-	// Remove stale old-named rollback backups (e.g. mac SDKVersionControl.bak)
-	// left by pre-rename versions; the canonical backup is kept for rollback.
-	if exe, err := os.Executable(); err == nil {
-		update.CleanStaleBackups(exe)
-	}
-
-	// Re-point any svc/legacy shortcut whose icon/target still references the
-	// old renamed folder (Windows only; no-op elsewhere).
+	// GUI-only: re-point any svc/legacy shortcut whose icon/target still
+	// references the old renamed folder (Windows only; no-op elsewhere).
 	migrate.RepairShortcutIcons()
 
-	// One-time rename migration for pre-rename self-updated installs. No-op
-	// off Windows and for installs that already run under the svc name.
+	// GUI-only: one-time rename migration for pre-rename self-updated installs.
+	// No-op off Windows and for installs that already run under the svc name.
+	// Needs a dialog, so it never moves into appcore.
 	migrate.MaybeShowLegacyMigrationPrompt(ctx, rt)
 }
 
