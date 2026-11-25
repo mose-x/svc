@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/bodgit/sevenzip v1.6.4
+	github.com/mattn/go-isatty v0.0.20
 	github.com/ulikunitz/xz v0.5.15
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/net v0.52.0
@@ -32,7 +33,6 @@ require (
 	github.com/leaanthony/slicer v1.6.0 // indirect
 	github.com/leaanthony/u v1.1.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
