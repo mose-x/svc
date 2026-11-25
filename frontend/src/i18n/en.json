@@ -296,6 +296,7 @@
     "http-status": "HTTP status {{status}}",
     "scheme-not-allowed": "Only http/https URLs are allowed; got scheme: {{scheme}}",
     "invalid-package-name": "Invalid npm package name: {{name}}",
-    "protected-package": "{{name}} is protected and cannot be uninstalled"
+    "protected-package": "{{name}} is protected and cannot be uninstalled",
+    "cli-no-dialog": "The command line cannot open a file picker; pass the path as an argument instead"
   }
 }
