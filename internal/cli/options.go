@@ -48,6 +48,9 @@ type Inputs struct {
 	NoColor bool
 	// Yes is --yes: skip confirmation prompts.
 	Yes bool
+	// NoWait is --no-wait: fail immediately instead of waiting for another
+	// svc operation to release the lock.
+	NoWait bool
 	// Lang is --lang.
 	Lang string
 	// InstallPath is --install-path, a one-run override of the SVC home. It is
@@ -71,6 +74,9 @@ type Options struct {
 	Lang string
 	// Yes reports whether confirmation prompts are pre-answered.
 	Yes bool
+	// NoWait reports whether a contended operation lock fails the run instead
+	// of blocking it.
+	NoWait bool
 	// InstallPath overrides the SVC home for this run only. Empty means "use
 	// the configured home".
 	InstallPath string
@@ -96,6 +102,7 @@ func Resolve(in Inputs) Options {
 		Quiet:       in.Quiet,
 		Lang:        i18n.ResolveLang(in.Lang, in.EnvLang, in.SettingsLang),
 		Yes:         in.Yes,
+		NoWait:      in.NoWait,
 		InstallPath: in.InstallPath,
 		StdinTTY:    in.StdinTTY,
 		StdoutTTY:   in.StdoutTTY,

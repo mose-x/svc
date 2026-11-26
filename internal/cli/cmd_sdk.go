@@ -89,7 +89,7 @@ func (r *runner) printStatusTable(statuses []sdk.SdkStatus) {
 		}
 		if status.ExternalManager != "" {
 			r.printer.Note("%s: %s", status.DisplayName,
-				r.printer.T("detail.externalManagerHint", map[string]string{"manager": status.ExternalManager}))
+				r.printer.T("detail.externalManagerHint", map[string]string{"manager": ExternalManagerLabel(status.ExternalManager)}))
 		}
 	}
 }
@@ -106,7 +106,7 @@ func (r *runner) pathState(status sdk.SdkStatus) string {
 	case status.SystemProtected:
 		return r.printer.T("app.systemManaged", nil)
 	case status.ExternalManager != "":
-		return r.printer.T("app.externalManager", map[string]string{"manager": status.ExternalManager})
+		return r.printer.T("app.externalManager", map[string]string{"manager": ExternalManagerLabel(status.ExternalManager)})
 	case status.PathConfigured:
 		return r.printer.T("app.inPathOnly", nil)
 	default:

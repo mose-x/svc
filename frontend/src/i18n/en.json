@@ -286,7 +286,9 @@
     "columnReleased": "Released",
     "noVersionsMatch": "No versions match the filter",
     "versionsFromCache": "Result is from the cache; refreshing in the background (use --refresh to fetch now)",
-    "versionsTruncated": "Showing the first {{shown}} of {{total}}"
+    "versionsTruncated": "Showing the first {{shown}} of {{total}}",
+    "waitingForLock": "Another svc operation is in progress; waiting for it to finish…",
+    "alreadyActive": "{{version}} is already the active version"
   },
   "errors": {
     "app-not-initialized": "The application is not fully initialized. Please restart the app and try again.",
@@ -323,6 +325,7 @@
     "invalid-package-name": "Invalid npm package name: {{name}}",
     "protected-package": "{{name}} is protected and cannot be uninstalled",
     "cli-no-dialog": "The command line cannot open a file picker; pass the path as an argument instead",
-    "no-cached-versions": "No cached version list for {{sdk}}, and --offline forbids fetching it; retry without --offline"
+    "no-cached-versions": "No cached version list for {{sdk}}, and --offline forbids fetching it; retry without --offline",
+    "operation-in-progress": "Another svc operation is in progress; try again shortly, or drop --no-wait to wait for it"
   }
 }

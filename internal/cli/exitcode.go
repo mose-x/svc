@@ -90,6 +90,11 @@ var codeExitCodes = map[string]int{
 	"protected-package":       ExitUsage,
 	"cli-no-dialog":           ExitUsage,
 
+	// Busy: another svc process holds the operation lock. Nothing about the
+	// command was wrong and nothing is broken; running it again once the other
+	// operation finishes is the whole remedy.
+	"operation-in-progress": ExitBusy,
+
 	// Error: a genuine failure that is not one of the classes above.
 	"app-not-initialized": ExitError,
 	"exec-timeout":        ExitError,
@@ -133,7 +138,7 @@ func ExitCodeForError(err error) int {
 	if errors.Is(err, ErrConfirmationRequired) {
 		return ExitUsage
 	}
-	if errors.Is(err, ErrConfirmationAborted) {
+	if errors.Is(err, ErrConfirmationAborted) || errors.Is(err, ErrConfirmationDeclined) {
 		return ExitCanceled
 	}
 	if code, ok := firstMarkerCode(err); ok {

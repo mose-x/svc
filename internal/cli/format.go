@@ -92,3 +92,23 @@ func formatFixed(value float64, digits int) string {
 	return sign + strconv.FormatInt(whole, 10) + "." +
 		strings.Repeat("0", digits-len(fraction)) + fraction
 }
+
+// externalManagerLabels is the display-name table from
+// frontend/src/constants/sdk.ts. The services report a machine name ("nvm-rust")
+// and both shells show a label ("nvm(nvm-rust)"), so the table has to exist twice
+// and a drift guard in format_test.go keeps the two copies equal.
+var externalManagerLabels = map[string]string{
+	"nvm-rust": "nvm(nvm-rust)",
+	"nvm":      "nvm",
+}
+
+// ExternalManagerLabel renders a detected external version manager the way the
+// GUI renders it. An unrecognised manager is passed through unchanged, which is
+// what the TypeScript does too: a new manager shows up by its machine name in
+// both shells rather than as a blank in one of them.
+func ExternalManagerLabel(manager string) string {
+	if label, ok := externalManagerLabels[manager]; ok {
+		return label
+	}
+	return manager
+}

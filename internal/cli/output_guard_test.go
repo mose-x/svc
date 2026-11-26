@@ -168,8 +168,14 @@ func TestCliCatalogGroupHasNoDeadKeys(t *testing.T) {
 
 // TestCliWordingIsSharedWithTheGUI pins the reuse claim itself: the words a
 // command prints for something the window also shows must come from a group the
-// GUI owns, not from a CLI-only synonym. These are the state labels `list` and
-// `path` render, each of which has an exact counterpart in the home page.
+// GUI owns, not from a CLI-only synonym.
+//
+// Two kinds of key are in here. The first are the state labels `list` and `path`
+// render, each with an exact counterpart in the home page. The second are the
+// sentences the mutating commands print -- every confirmation question, its
+// explanation, and every success or warning toast has a literal counterpart in
+// DetailPanel.tsx, so a CLI that grew its own wording for "Uninstall Go 1.22.0?"
+// would be caught here rather than by a user noticing the two shells disagree.
 func TestCliWordingIsSharedWithTheGUI(t *testing.T) {
 	shared := []string{
 		"path.sdkColumn",
@@ -180,6 +186,23 @@ func TestCliWordingIsSharedWithTheGUI(t *testing.T) {
 		"detail.needsSwitch",
 		"detail.externalManagerHint",
 		"detail.systemConflictTitle",
+		"detail.systemConflictMsg",
+		"detail.confirmInstallSdk",
+		"detail.confirmInstallDesc",
+		"detail.installExternalManagerWarn",
+		"detail.installSuccess",
+		"detail.reinstallConfirm",
+		"detail.reinstallConfirmDesc",
+		"detail.switchConfirm",
+		"detail.switchConfirmDesc",
+		"detail.switchSuccess",
+		"detail.reopenTerminalHint",
+		"detail.uninstallConfirm",
+		"detail.uninstallConfirmDesc",
+		"detail.uninstallActiveConfirm",
+		"detail.uninstallActiveConfirmDesc",
+		"detail.uninstallSuccess",
+		"detail.activeVersionDeleted",
 		"detail.pathBinaryTitle",
 		"app.configured",
 		"app.notConfigured",

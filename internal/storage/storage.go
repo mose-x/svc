@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"svc/internal/config"
 	"svc/internal/helpers"
@@ -27,6 +28,34 @@ type Manager struct {
 // settings may be nil in unit tests that only exercise cfg-backed paths.
 func NewManager(cfg *config.Config, registry *sdk.Registry, pathMgr pathmgr.PathManager, shimMgr *shimmanager.Manager, settings *config.SettingsManager) *Manager {
 	return &Manager{cfg: cfg, registry: registry, pathMgr: pathMgr, shimMgr: shimMgr, settings: settings}
+}
+
+// ActiveVersionDeletedPrefix marks the sentinel UninstallVersion returns when
+// the version it removed was the active one.
+//
+// A prefixed string rather than a typed error or an apperr code, for a reason
+// worth keeping: the GUI receives errors across the Wails boundary as their
+// message text, and DetailPanel.tsx matches exactly this prefix to turn the case
+// into a warning toast plus a refresh instead of an error dialog. A drift guard
+// in storage_test.go pins the Go constant to that literal, so neither side can
+// rename it on its own.
+const ActiveVersionDeletedPrefix = "ACTIVE_VERSION_DELETED:"
+
+// ActiveVersionDeleted reports whether err is the ActiveVersionDeletedPrefix
+// sentinel and returns the SDK type it names.
+//
+// Deleting the version the user was on is not a failure -- the uninstall did
+// exactly what was asked -- so both shells report success with a warning rather
+// than letting it become a non-zero exit code or an error dialog.
+func ActiveVersionDeleted(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	text := err.Error()
+	if !strings.HasPrefix(text, ActiveVersionDeletedPrefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(text, ActiveVersionDeletedPrefix), true
 }
 
 type StorageInfo struct {
@@ -97,7 +126,7 @@ func (m *Manager) UninstallVersion(sdkType string, version string) error {
 
 	if wasActive {
 		// Return special error to signal frontend to refresh and show warning
-		return fmt.Errorf("ACTIVE_VERSION_DELETED:%s", sdkType)
+		return fmt.Errorf("%s%s", ActiveVersionDeletedPrefix, sdkType)
 	}
 
 	logger.Info("Successfully uninstalled %s version %s", sdkType, version)

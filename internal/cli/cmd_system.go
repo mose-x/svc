@@ -77,7 +77,7 @@ func (r *runner) pathEntryState(entry pathmgr.PathEntry) string {
 	case entry.SystemProtected:
 		return r.printer.T("app.systemManaged", nil)
 	case entry.ExternalManager != "":
-		return r.printer.T("app.externalManager", map[string]string{"manager": entry.ExternalManager})
+		return r.printer.T("app.externalManager", map[string]string{"manager": ExternalManagerLabel(entry.ExternalManager)})
 	case entry.SdkType != "":
 		return r.printer.T("cli.stateImportable", nil)
 	default:

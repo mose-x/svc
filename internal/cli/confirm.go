@@ -23,6 +23,11 @@ var (
 	// ErrConfirmationAborted means the prompt ended without an answer: EOF, a
 	// closed stdin, or an interrupt during the read.
 	ErrConfirmationAborted = errors.New("cli: confirmation aborted")
+	// ErrConfirmationDeclined means somebody was asked and said no. A command
+	// returns it instead of nil so the run exits as a cancellation rather than
+	// as a success: "nothing was done because you said not to" must not look
+	// like "it was done" to a script.
+	ErrConfirmationDeclined = errors.New("cli: confirmation declined")
 )
 
 // yesWords and noWords are the accepted replies. Chinese answers are

@@ -63,6 +63,11 @@ const (
 	// "not there" rather than a failure: the network was never consulted
 	// because the caller forbade it.
 	NoCachedVersions Code = "no-cached-versions"
+	// OperationInProgress is raised by a mutating command that was told not to
+	// wait (--no-wait) while another svc process holds the operation lock.
+	// Retrying later succeeds without changing the command, which is what
+	// separates it from every usage failure.
+	OperationInProgress Code = "operation-in-progress"
 )
 
 // New builds the marked error. params may be nil; values are interpolated
