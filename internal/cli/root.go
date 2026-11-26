@@ -116,6 +116,7 @@ type globalFlags struct {
 	quiet       bool
 	noColor     bool
 	yes         bool
+	noWait      bool
 	lang        string
 	installPath string
 }
@@ -207,6 +208,7 @@ func (r *runner) newRootCommand() *cobra.Command {
 	flags.BoolVarP(&r.flags.quiet, "quiet", "q", false, "print only results and errors")
 	flags.BoolVar(&r.flags.noColor, "no-color", false, "never print ANSI colour sequences")
 	flags.BoolVarP(&r.flags.yes, "yes", "y", false, "answer yes to every confirmation prompt")
+	flags.BoolVar(&r.flags.noWait, "no-wait", false, "fail instead of waiting when another svc operation holds the lock")
 	flags.StringVar(&r.flags.lang, "lang", "", "message language, zh or en (default: $SVC_LANG, then settings.json)")
 	flags.StringVar(&r.flags.installPath, "install-path", "", "operate on this SVC home instead of the configured one; not saved")
 
@@ -239,6 +241,7 @@ func (r *runner) resolveOptions() error {
 		Quiet:       r.flags.quiet,
 		NoColor:     r.flags.noColor,
 		Yes:         r.flags.yes,
+		NoWait:      r.flags.noWait,
 		Lang:        r.flags.lang,
 		InstallPath: r.flags.installPath,
 		Environment: *env,
