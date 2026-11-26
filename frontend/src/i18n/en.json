@@ -288,7 +288,13 @@
     "versionsFromCache": "Result is from the cache; refreshing in the background (use --refresh to fetch now)",
     "versionsTruncated": "Showing the first {{shown}} of {{total}}",
     "waitingForLock": "Another svc operation is in progress; waiting for it to finish…",
-    "alreadyActive": "{{version}} is already the active version"
+    "alreadyActive": "{{version}} is already the active version",
+    "freedBytes": "Freed {{size}}",
+    "cleanLogsConfirm": "Delete all {{count}} log file(s)?",
+    "cleanLogsDesc": "Today's active log is recreated empty. This action cannot be undone.",
+    "cleanInactiveConfirm": "Delete the {{count}} inactive version(s) of {{sdk}}?",
+    "cleanInactiveDesc": "Only the active version is kept. This action cannot be undone.",
+    "removedVersions": "Removed {{count}} version(s)"
   },
   "errors": {
     "app-not-initialized": "The application is not fully initialized. Please restart the app and try again.",
