@@ -46,16 +46,8 @@ func TestListReportsEverySdk(t *testing.T) {
 			}
 		}
 		for _, kind := range sdk.AllSdkTypes() {
-			name := sdk.SdkDisplayName(kind)
-			found := false
-			for _, line := range lines[1:] {
-				if strings.HasPrefix(line, name) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("no row for %s in:\n%s", name, s.stdout)
+			if row := tableRow(lines[1:], sdk.SdkDisplayName(kind)); row == "" {
+				t.Errorf("no row for %s in:\n%s", sdk.SdkDisplayName(kind), s.stdout)
 			}
 		}
 		if strings.Contains(s.stdout.String(), ansiDim) {
@@ -263,10 +255,12 @@ func TestStatusAssemblesWhatTheGuiAssemblesInReact(t *testing.T) {
 		if strings.Join(got, ",") != strings.Join(want, ",") {
 			t.Errorf("the document's keys are [%s], want [%s]", strings.Join(got, " "), strings.Join(want, " "))
 		}
-		// An empty conflict list is an empty array, so a consumer can take its
-		// length without a nil check.
-		if got := strings.TrimSpace(string(document["conflicts"])); got != "[]" {
-			t.Errorf("conflicts = %s, want [] rather than null", got)
+		// The conflict list is an array whatever its length, so a consumer can
+		// take len() without a nil check. Its CONTENT is host-dependent -- a
+		// machine with Node.js in Program Files really does have a conflict --
+		// so the shape is what a portable test can pin.
+		if got := strings.TrimSpace(string(document["conflicts"])); !strings.HasPrefix(got, "[") {
+			t.Errorf("conflicts = %s, want a JSON array rather than null", got)
 		}
 	})
 
@@ -277,8 +271,11 @@ func TestStatusAssemblesWhatTheGuiAssemblesInReact(t *testing.T) {
 		}
 
 		text := s.stdout.String()
+		// The conflict section's heading is always there; which of its two
+		// bodies follows depends on the host's PATH and is pinned by
+		// TestConflictsRenderingCoversBothBranches instead.
 		for _, key := range []string{"path.sdkColumn", "detail.currentVersion", "detail.installed",
-			"cli.installDir", "cli.columnPath", "detail.systemConflictTitle", "cli.noConflicts"} {
+			"cli.installDir", "cli.columnPath", "detail.systemConflictTitle"} {
 			if want := catalogWord(t, "en", key, nil); !strings.Contains(text, want) {
 				t.Errorf("stdout does not carry %q (%s):\n%s", want, key, text)
 			}
@@ -406,22 +403,43 @@ func TestUrlRejectsBadInputWithoutGoingToTheNetwork(t *testing.T) {
 	}
 }
 
-// TestConflictsTreatsAnEmptyListAsAResult pins the exit code claim in the
+// TestConflictsTreatsTheListAsAResult pins the exit code claim in the
 // command's own help: 0 whether or not conflicts were found, because an empty
 // list is an answer. A script that treats "no conflicts" as a failure would
 // have to parse a localized sentence to find out it was wrong.
-func TestConflictsTreatsAnEmptyListAsAResult(t *testing.T) {
-	t.Run("text", func(t *testing.T) {
+//
+// Whether this host HAS conflicts is not the command's business -- a Windows
+// box with Node.js in Program Files genuinely does -- so the assertions are
+// about the shape of the answer and the exit code, and both bodies of the
+// conflict section are covered by TestConflictsRenderingCoversBothBranches.
+func TestConflictsTreatsTheListAsAResult(t *testing.T) {
+	t.Run("text reports under the GUI's heading whatever it found", func(t *testing.T) {
 		code, s := pipedRun(t, nil, "--lang", "en", "conflicts", "nodejs")
 		if code != ExitOK {
 			t.Fatalf("svc conflicts nodejs = exit %d, want %d; stderr:\n%s", code, ExitOK, s.stderr)
 		}
-		text := s.stdout.String()
-		if !strings.Contains(text, catalogWord(t, "en", "detail.systemConflictTitle", nil)) {
-			t.Errorf("stdout = %q, want the heading the GUI uses", text)
+		lines := outLines(s)
+		if len(lines) == 0 {
+			t.Fatal("stdout is empty; the command owes a heading at minimum")
 		}
-		if !strings.Contains(text, catalogWord(t, "en", "cli.noConflicts", nil)) {
-			t.Errorf("stdout = %q, want it to say so when the list is empty", text)
+		if want := catalogWord(t, "en", "detail.systemConflictTitle", nil); lines[0] != want {
+			t.Errorf("the first line = %q, want the heading %q", lines[0], want)
+		}
+		// The heading is always followed by a body: either the single "none
+		// found" line, or one two-space-indented entry per conflict. Nothing
+		// else may share the result stream.
+		if len(lines) < 2 {
+			t.Fatalf("stdout = %q has a heading but no body", s.stdout)
+		}
+		if empty := catalogWord(t, "en", "cli.noConflicts", nil); len(lines) != 2 || lines[1] != empty {
+			for _, line := range lines[1:] {
+				if !strings.HasPrefix(line, "  ") || strings.TrimSpace(line) == "" {
+					t.Errorf("conflict line %q is not a two-space-indented entry", line)
+				}
+			}
+		}
+		if s.stderr.Len() != 0 {
+			t.Errorf("stderr = %q, want nothing: conflicts is a result", s.stderr)
 		}
 	})
 
@@ -433,10 +451,41 @@ func TestConflictsTreatsAnEmptyListAsAResult(t *testing.T) {
 		var conflicts []string
 		decodeJSON(t, s, &conflicts)
 		if conflicts == nil {
-			t.Error("conflicts decoded to nil, want an empty array")
+			t.Error("conflicts decoded to nil, want an array a consumer can take len() of")
 		}
-		if got := strings.TrimSpace(s.stdout.String()); got != "[]" {
-			t.Errorf("stdout = %q, want [] on its own line", got)
+		if !strings.HasPrefix(strings.TrimSpace(s.stdout.String()), "[") {
+			t.Errorf("stdout = %q, want a JSON array", s.stdout)
+		}
+	})
+
+	t.Run("text and --json agree about how many conflicts there are", func(t *testing.T) {
+		run := sharedHome(t, nil)
+
+		jsonCode, jsonRun := run("--json", "conflicts", "nodejs")
+		if jsonCode != ExitOK {
+			t.Fatalf("svc --json conflicts nodejs = exit %d, want %d", jsonCode, ExitOK)
+		}
+		var conflicts []string
+		decodeJSON(t, jsonRun, &conflicts)
+
+		textCode, textRun := run("--lang", "en", "conflicts", "nodejs")
+		if textCode != ExitOK {
+			t.Fatalf("svc conflicts nodejs = exit %d, want %d", textCode, ExitOK)
+		}
+		body := outLines(textRun)[1:]
+		if len(conflicts) == 0 {
+			if len(body) != 1 || body[0] != catalogWord(t, "en", "cli.noConflicts", nil) {
+				t.Errorf("stdout = %q, want the empty-list message", textRun.stdout)
+			}
+			return
+		}
+		if len(body) != len(conflicts) {
+			t.Fatalf("text listed %d conflicts but --json listed %d", len(body), len(conflicts))
+		}
+		for i, conflict := range conflicts {
+			if got := strings.TrimSpace(body[i]); got != conflict {
+				t.Errorf("conflict %d is %q in text but %q in --json", i, got, conflict)
+			}
 		}
 	})
 
@@ -514,4 +563,49 @@ func TestPathEntryStateUsesTheGuisOwnWords(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConflictsRenderingCoversBothBranches drives the shared renderer directly,
+// because which branch `svc conflicts` takes depends on the host's PATH: a
+// machine with Node.js under Program Files has a conflict and a clean container
+// does not. Both bodies are pinned here so neither can rot unnoticed, and
+// `status` and `conflicts` cannot drift into describing one thing two ways.
+func TestConflictsRenderingCoversBothBranches(t *testing.T) {
+	s := newStreams()
+	r := newRunner(t, s, globalFlags{}, tempHome(t, nil))
+	if err := r.resolveOptions(); err != nil {
+		t.Fatalf("resolveOptions: %v", err)
+	}
+
+	t.Run("an empty list says so rather than printing nothing", func(t *testing.T) {
+		for _, empty := range [][]string{nil, {}} {
+			before := s.stdout.Len()
+			r.printConflicts(empty)
+			got := s.stdout.String()[before:]
+			if want := catalogWord(t, "zh", "cli.noConflicts", nil) + "\n"; got != want {
+				t.Errorf("stdout gained %q, want %q", got, want)
+			}
+		}
+	})
+
+	t.Run("each conflict is one indented line", func(t *testing.T) {
+		before := s.stdout.Len()
+		r.printConflicts([]string{"PATH: C:\\Program Files\\nodejs\\", "NODE_HOME=/opt/node"})
+		lines := linesOf(s.stdout.String()[before:])
+		want := []string{"  PATH: C:\\Program Files\\nodejs\\", "  NODE_HOME=/opt/node"}
+		if len(lines) != len(want) {
+			t.Fatalf("got %d lines, want one per conflict: %q", len(lines), lines)
+		}
+		for i := range want {
+			if lines[i] != want[i] {
+				t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+			}
+		}
+	})
+
+	t.Run("a conflict list is never a note", func(t *testing.T) {
+		if s.stderr.Len() != 0 {
+			t.Errorf("stderr = %q, want nothing: conflicts are results, not commentary", s.stderr)
+		}
+	})
 }

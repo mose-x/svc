@@ -219,3 +219,17 @@ func sharedHome(t *testing.T, seed func(home string)) func(args ...string) (int,
 		return code, s
 	}
 }
+
+// tableRow finds a rendered table row by its first column, or returns an empty
+// string. The first cell is padded to the column width and followed by the
+// two-space separator, so matching on the cell plus one space is exact: a plain
+// prefix match would let "Go" be satisfied by the "Gradle" row, and a missing
+// Go row would then go unreported.
+func tableRow(rows []string, firstCell string) string {
+	for _, row := range rows {
+		if strings.HasPrefix(row, firstCell+" ") {
+			return row
+		}
+	}
+	return ""
+}

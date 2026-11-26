@@ -267,8 +267,19 @@ func TestLogsListAndShow(t *testing.T) {
 	}
 
 	// The name `logs list` reports is the name `logs show` accepts: that
-	// round trip is the whole interface between the two commands.
-	name := files[0].Name
+	// round trip is the whole interface between the two commands. Pick a file
+	// that actually holds something, so this test does not depend on no other
+	// test having left an empty one in the shared log directory.
+	name := ""
+	for _, file := range files {
+		if file.Size > 0 {
+			name = file.Name
+			break
+		}
+	}
+	if name == "" {
+		t.Skip("every log file is empty; nothing to show")
+	}
 	showCode, showRun := run("logs", "show", name)
 	if showCode != ExitOK {
 		t.Fatalf("svc logs show %s = exit %d, want %d; stderr:\n%s", name, showCode, ExitOK, showRun.stderr)

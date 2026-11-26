@@ -283,15 +283,8 @@ func TestEndpointsListReportsDefaultsAndOverrides(t *testing.T) {
 			}
 		}
 
-		var nodeRow, goRow string
-		for _, line := range lines[1:] {
-			switch {
-			case strings.HasPrefix(line, "Node.js"):
-				nodeRow = line
-			case strings.HasPrefix(line, "Go"):
-				goRow = line
-			}
-		}
+		nodeRow := tableRow(lines[1:], "Node.js")
+		goRow := tableRow(lines[1:], "Go")
 		if nodeRow == "" || goRow == "" {
 			t.Fatalf("stdout has no Node.js or Go row:\n%s", s.stdout)
 		}
