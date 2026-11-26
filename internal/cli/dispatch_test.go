@@ -25,13 +25,14 @@ func TestDispatch(t *testing.T) {
 		{"--version", []string{"--version"}, KindLegacyVersion},
 		{"version with a flag", []string{"version", "--verbose"}, KindLegacyVersion},
 
-		{"help", []string{"help"}, KindLegacyHelp},
-		{"-h", []string{"-h"}, KindLegacyHelp},
-		{"--help", []string{"--help"}, KindLegacyHelp},
-
-		// Everything else belongs to the command tree, including a global flag
-		// in first position and including a misspelling: opening a window
+		// Everything else belongs to the command tree, including the three help
+		// spellings (cobra owns them now that the tree has commands to list), a
+		// global flag in first position, and a misspelling: opening a window
 		// because someone typo'd `instal` is the failure this table prevents.
+		{"help", []string{"help"}, KindCommand},
+		{"-h", []string{"-h"}, KindCommand},
+		{"--help", []string{"--help"}, KindCommand},
+		{"help for one command", []string{"help", "list"}, KindCommand},
 		{"list", []string{"list"}, KindCommand},
 		{"install with arguments", []string{"install", "nodejs", "20.11.0"}, KindCommand},
 		{"a global flag first", []string{"--json", "list"}, KindCommand},
@@ -52,7 +53,6 @@ func TestKindString(t *testing.T) {
 		KindGUI:           "gui",
 		KindLegacyInit:    "legacy-init",
 		KindLegacyVersion: "legacy-version",
-		KindLegacyHelp:    "legacy-help",
 		KindCommand:       "command",
 		Kind(42):          "Kind(42)",
 	}
@@ -63,13 +63,14 @@ func TestKindString(t *testing.T) {
 	}
 }
 
-// TestLegacyCommandsMatchMainGuardsTheRedLine pins the legacy spelling list to
-// the exact set main.go switched on before the CLI existed. Adding a spelling
-// here routes an argument away from the command tree; removing one sends a
-// long-standing invocation to cobra, where it becomes "unknown command".
+// TestLegacyCommandsMatchMain pins the legacy spelling list to the exact set
+// main.go still switches on. Adding a spelling here routes an argument away
+// from the command tree; removing one sends a long-standing invocation to
+// cobra, where it becomes "unknown command" -- which for `svc version`, whose
+// output scripts parse, is a breaking change disguised as a cleanup.
 func TestLegacyCommandsMatchMain(t *testing.T) {
 	// Byte order, which puts both dash-dash spellings ahead of the short ones.
-	want := []string{"--help", "--version", "-h", "-v", "help", "init", "setup", "version"}
+	want := []string{"--version", "-v", "init", "setup", "version"}
 	got := make([]string, 0, len(legacyCommands))
 	for name := range legacyCommands {
 		got = append(got, name)
@@ -114,17 +115,25 @@ func TestNoCommandNameCollidesWithAnSdkBinary(t *testing.T) {
 	}
 
 	// An empty tree would pass forever, so assert the enumeration really saw
-	// something. Every command P3 adds is then covered without touching this
-	// test again.
+	// something. Every command a later phase adds is then covered by the loop
+	// above without touching this test again.
 	names := make([]string, 0, len(root.Commands()))
 	for _, command := range root.Commands() {
 		names = append(names, command.Name())
 	}
 	slices.Sort(names)
-	// Only `completion` is assertable today: cobra's InitDefaultHelpCmd returns
-	// early when the root has no subcommands, so `help` joins the list on its
-	// own once P3 registers the first real command.
-	if !slices.Contains(names, "completion") {
-		t.Errorf("the root command exposes [%s]; the enumeration saw nothing worth checking", strings.Join(names, " "))
+	// `help` only appears once the root has a real subcommand (cobra's
+	// InitDefaultHelpCmd returns early otherwise), so requiring it also pins
+	// that the tree is not empty.
+	for _, want := range []string{"completion", "help", "list", "status", "storage"} {
+		if !slices.Contains(names, want) {
+			t.Errorf("the root command exposes [%s]; %q is missing", strings.Join(names, " "), want)
+		}
+	}
+	// The read-only command set P3 ships. A command added without appearing
+	// here is not an error -- the loop above already checked its name -- but a
+	// command REMOVED silently shrinks the surface this guard proves non-empty.
+	if len(names) < 13 {
+		t.Errorf("the root command exposes only %d commands: [%s]", len(names), strings.Join(names, " "))
 	}
 }

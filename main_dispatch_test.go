@@ -151,7 +151,7 @@ func TestMainSwitchCoversEveryDispatchKind(t *testing.T) {
 
 	// Every Kind internal/cli can return except KindGUI, which is the default.
 	// A missing case means that Kind falls through and opens the window.
-	want := []string{"cli.KindCommand", "cli.KindLegacyHelp", "cli.KindLegacyInit", "cli.KindLegacyVersion"}
+	want := []string{"cli.KindCommand", "cli.KindLegacyInit", "cli.KindLegacyVersion"}
 	slices.Sort(cases)
 	if !slices.Equal(cases, want) {
 		t.Errorf("main switches on %v, want exactly %v", cases, want)

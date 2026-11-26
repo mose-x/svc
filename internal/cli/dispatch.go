@@ -20,8 +20,6 @@ const (
 	KindLegacyInit
 	// KindLegacyVersion prints the version line.
 	KindLegacyVersion
-	// KindLegacyHelp prints the built-in help text.
-	KindLegacyHelp
 	// KindCommand runs the cobra command tree.
 	KindCommand
 )
@@ -35,8 +33,6 @@ func (k Kind) String() string {
 		return "legacy-init"
 	case KindLegacyVersion:
 		return "legacy-version"
-	case KindLegacyHelp:
-		return "legacy-help"
 	case KindCommand:
 		return "command"
 	default:
@@ -47,17 +43,22 @@ func (k Kind) String() string {
 // legacyCommands maps the exact argument spellings main.go switched on before
 // the CLI existed to what each one did. They stay on that code path byte for
 // byte: `svc version` in particular is parsed by scripts, so its output is
-// frozen, and `svc help` still has nothing to show until the command tree has
-// commands in it.
+// frozen.
+//
+// help, -h and --help are NOT in this table any more. They used to print a
+// static four-line list, which was the right answer while the command tree was
+// empty and became actively misleading the moment it was not: a help that does
+// not mention `svc list` sends the user back to the README. cobra now owns
+// them, and the two commands that genuinely stay legacy are named in the root
+// command's long help so they remain discoverable. `svc version` could follow
+// the same route once --verbose gives it something to do, but its output is
+// frozen by scripts, so it waits.
 var legacyCommands = map[string]Kind{
 	"init":      KindLegacyInit,
 	"setup":     KindLegacyInit,
 	"version":   KindLegacyVersion,
 	"-v":        KindLegacyVersion,
 	"--version": KindLegacyVersion,
-	"help":      KindLegacyHelp,
-	"-h":        KindLegacyHelp,
-	"--help":    KindLegacyHelp,
 }
 
 // Dispatch decides which shell handles argv, excluding the program name.

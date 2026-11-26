@@ -87,10 +87,12 @@ type runner struct {
 
 	opts        Options
 	catalog     *i18n.Catalog
+	printer     *Printer
 	home        *appcore.Home
 	core        *appcore.Core
 	runtime     *clirt.Runtime
 	progress    *ProgressRenderer
+	scan        *ScanRenderer
 	prompt      *Prompt
 	stopSignals context.CancelFunc
 
@@ -145,7 +147,16 @@ func (r *runner) newRootCommand() *cobra.Command {
 		Use:   "svc",
 		Short: "SDK version control",
 		Long: "svc installs, switches and manages multiple versions of 14 SDKs.\n" +
-			"Running svc with no arguments launches the graphical application.",
+			"Running svc with no arguments launches the graphical application.\n" +
+			"\n" +
+			"The commands that predate the CLI keep their original behaviour and\n" +
+			"output, and are therefore not listed below:\n" +
+			"\n" +
+			"  svc init       One-time shim setup (creates ~/.svc/shims and .svc.rc)\n" +
+			"  svc version    Print the version line\n" +
+			"\n" +
+			"After installing an SDK, its commands (node, go, java, ...) are\n" +
+			"available in every new shell via the shims in ~/.svc/shims.",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -187,6 +198,8 @@ func (r *runner) newRootCommand() *cobra.Command {
 	flags.BoolVarP(&r.flags.yes, "yes", "y", false, "answer yes to every confirmation prompt")
 	flags.StringVar(&r.flags.lang, "lang", "", "message language, zh or en (default: $SVC_LANG, then settings.json)")
 	flags.StringVar(&r.flags.installPath, "install-path", "", "operate on this SVC home instead of the configured one; not saved")
+
+	r.addCommands(root)
 	return root
 }
 
@@ -229,6 +242,7 @@ func (r *runner) resolveOptions() error {
 	}
 	r.home = home
 	r.catalog = catalog
+	r.printer = NewPrinter(r.opts, catalog, r.in.Stdout, r.in.Stderr)
 	r.prompt = NewPrompt(r.in.Stdin, r.in.Stderr)
 	return nil
 }
@@ -253,8 +267,11 @@ func (r *runner) bootstrap(level appcore.Level) (*appcore.Core, error) {
 
 	ctx, stop := clirt.SignalContext(context.Background())
 	r.stopSignals = stop
-	r.runtime = clirt.New(ctx, r.eventSink())
+	// The renderers are built before the runtime that routes to them, so the
+	// first event a service emits already has somewhere to go.
 	r.progress = NewProgressRenderer(r.opts, r.catalog, r.in.Stderr)
+	r.scan = NewScanRenderer(r.opts, r.catalog, r.in.Stderr)
+	r.runtime = clirt.New(ctx, r.eventSink())
 
 	core, err := r.home.Bootstrap(ctx, r.runtime, level)
 	if err != nil {
@@ -269,15 +286,24 @@ func (r *runner) bootstrap(level appcore.Level) (*appcore.Core, error) {
 
 // eventSink routes service events to this run's renderers.
 //
-// Only the install progress is wired for now: the scan line belongs to `svc
-// list` and the self-update line to `svc self update`, and each gets its
-// renderer when its command lands. A nil handler drops the event quietly,
-// which is what RouteEvent is built to tolerate.
+// The self-update line is not wired yet: it belongs to `svc self update`, and
+// gets its renderer when that command lands. A nil handler drops the event
+// quietly, which is what RouteEvent is built to tolerate.
+//
+// The handlers are collected per event rather than once when the sink is
+// built. Capturing them early is how a renderer that does not exist yet gets
+// frozen into the closure as nil, and the result is silence that looks exactly
+// like a service that emitted nothing: `svc list` would scan fourteen SDKs
+// without saying so. Reading the fields at call time makes the ordering of
+// bootstrap's assignments unable to break the wiring again.
 func (r *runner) eventSink() clirt.EventSink {
-	handlers := EventHandlers{}
 	return func(eventName string, payload any) {
+		handlers := EventHandlers{}
 		if r.progress != nil {
 			handlers.InstallProgress = r.progress.Render
+		}
+		if r.scan != nil {
+			handlers.ScanProgress = r.scan.Render
 		}
 		RouteEvent(handlers, eventName, payload)
 	}
@@ -287,6 +313,9 @@ func (r *runner) eventSink() clirt.EventSink {
 // progress line gets its newline before the signal handlers are released, so a
 // Ctrl-C arriving during teardown cannot leave the terminal mid-line.
 func (r *runner) shutdown() {
+	if r.scan != nil {
+		r.scan.Close()
+	}
 	if r.progress != nil {
 		r.progress.Close()
 	}

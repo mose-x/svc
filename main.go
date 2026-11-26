@@ -37,8 +37,6 @@ func main() {
 		runInitCLI()
 	case cli.KindLegacyVersion:
 		printVersion()
-	case cli.KindLegacyHelp:
-		printHelp()
 	case cli.KindCommand:
 		os.Exit(cli.Execute(cli.ExecuteInput{
 			Args:      os.Args[1:],
@@ -139,17 +137,4 @@ func printVersion() {
 		return
 	}
 	fmt.Fprintf(os.Stdout, "svc %s\n", info.Version)
-}
-
-func printHelp() {
-	fmt.Fprintln(os.Stdout, "svc - SDK version control")
-	fmt.Fprintln(os.Stdout, "")
-	fmt.Fprintln(os.Stdout, "Usage:")
-	fmt.Fprintln(os.Stdout, "  svc            Launch the GUI application")
-	fmt.Fprintln(os.Stdout, "  svc init       One-time shim setup (creates ~/.svc/shims, .svc.rc)")
-	fmt.Fprintln(os.Stdout, "  svc version    Print version")
-	fmt.Fprintln(os.Stdout, "  svc help       Show this help")
-	fmt.Fprintln(os.Stdout, "")
-	fmt.Fprintln(os.Stdout, "After installing an SDK, its commands (node, go, java, ...) are")
-	fmt.Fprintln(os.Stdout, "available in every new shell via shims in ~/.svc/shims.")
 }

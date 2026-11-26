@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"svc/internal/appcore"
@@ -102,5 +104,118 @@ func writeSettings(t *testing.T, home string, settings config.AppSettings) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "settings.json"), raw, 0644); err != nil {
 		t.Fatalf("write settings.json: %v", err)
+	}
+}
+
+// runArgs drives one invocation end to end against a temporary SVC home and
+// returns the exit code with the streams it wrote to.
+//
+// env decides which output contract the run resolves to. Passing an Environment
+// with nothing set makes the run a pipe, which is the strictest discipline and
+// therefore what most assertions want; the mode must never depend on whether
+// the test binary happens to be attached to a terminal.
+func runArgs(t *testing.T, env *Environment, seed func(home string), args ...string) (int, *streams) {
+	t.Helper()
+	s := newStreams()
+	code := Execute(ExecuteInput{
+		Args:     args,
+		Catalogs: shippedCatalogs(t),
+		Stdin:    s.stdin,
+		Stdout:   s.stdout,
+		Stderr:   s.stderr,
+		OpenHome: tempHome(t, seed),
+		Env:      env,
+	})
+	return code, s
+}
+
+// pipedRun is an invocation whose stdout is a pipe: plain mode, no colour, and
+// no notes.
+func pipedRun(t *testing.T, seed func(home string), args ...string) (int, *streams) {
+	t.Helper()
+	return runArgs(t, &Environment{}, seed, args...)
+}
+
+// terminalRun is an invocation at a terminal with colour disabled, so notes are
+// written but every assertion can stay on plain text.
+func terminalRun(t *testing.T, seed func(home string), args ...string) (int, *streams) {
+	t.Helper()
+	return runArgs(t, &Environment{StdoutTTY: true, EnvNoColor: "1"}, seed, args...)
+}
+
+// outLines splits a run's result stream into the lines a reader sees. The
+// trailing newline every writer adds is dropped, and an empty stream yields no
+// lines rather than one empty one -- the difference matters for the commands
+// whose success is silence.
+func outLines(s *streams) []string {
+	return linesOf(s.stdout.String())
+}
+
+// errLines is outLines for the diagnostic stream.
+func errLines(s *streams) []string {
+	return linesOf(s.stderr.String())
+}
+
+// linesOf splits rendered output into the lines a reader sees.
+func linesOf(text string) []string {
+	trimmed := strings.TrimSuffix(text, "\n")
+	if trimmed == "" {
+		return nil
+	}
+	return strings.Split(trimmed, "\n")
+}
+
+// decodeJSON unmarshals a run's stdout, failing the test when the result stream
+// is not exactly one JSON document. That failure is the one the output contract
+// exists to prevent, so it is reported with the bytes that caused it.
+func decodeJSON(t *testing.T, s *streams, into any) {
+	t.Helper()
+	if err := json.Unmarshal(s.stdout.Bytes(), into); err != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%s", err, s.stdout)
+	}
+}
+
+// jsonKeysOf marshals a value and returns the top-level key set of the
+// resulting object. It is how a test asserts that a command emitted a service
+// struct verbatim rather than a CLI-only envelope around it.
+func jsonKeysOf(t *testing.T, value any) []string {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal %T: %v", value, err)
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		t.Fatalf("%T did not marshal to a JSON object: %v", value, err)
+	}
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// sharedHome binds ONE temporary home and returns a function that invokes the
+// CLI against it as often as the test likes. Every other helper builds a fresh
+// home per call, which is right for a single invocation and wrong for comparing
+// two: the paths a command reports would differ between them for no reason
+// other than that they ran twice.
+func sharedHome(t *testing.T, seed func(home string)) func(args ...string) (int, *streams) {
+	t.Helper()
+	openHome := tempHome(t, seed)
+	catalogs := shippedCatalogs(t)
+	return func(args ...string) (int, *streams) {
+		s := newStreams()
+		code := Execute(ExecuteInput{
+			Args:     args,
+			Catalogs: catalogs,
+			Stdin:    s.stdin,
+			Stdout:   s.stdout,
+			Stderr:   s.stderr,
+			OpenHome: openHome,
+			Env:      &Environment{},
+		})
+		return code, s
 	}
 }
