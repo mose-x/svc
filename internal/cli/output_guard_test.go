@@ -175,6 +175,8 @@ func TestCliWordingIsSharedWithTheGUI(t *testing.T) {
 		"path.sdkColumn",
 		"detail.currentVersion",
 		"detail.installed",
+		"detail.latest",
+		"detail.currentConfig",
 		"detail.needsSwitch",
 		"detail.externalManagerHint",
 		"detail.systemConflictTitle",

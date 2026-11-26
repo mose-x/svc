@@ -53,6 +53,9 @@ var codeExitCodes = map[string]int{
 	"version-dir-missing": ExitNotFound,
 	"no-backup":           ExitNotFound,
 	"no-asset":            ExitNotFound,
+	// The list was never fetched and --offline forbade fetching it, so there
+	// is nothing to report; dropping --offline is how the caller acts on it.
+	"no-cached-versions": ExitNotFound,
 
 	// Integrity: something was found but did not pass a check. Retrying is
 	// pointless until the download or the tree is repaired.

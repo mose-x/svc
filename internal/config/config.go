@@ -16,6 +16,7 @@ const (
 	svcDirName   = ".svc"
 	configFile   = "config.json"
 	tmpDirName   = "tmp"
+	cacheDirName = "cache"
 	envShFile    = "env.sh"
 	shimsDirName = "shims"
 	shimsCfgFile = "shims.json"
@@ -177,6 +178,15 @@ func (c *Config) TmpDir() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return filepath.Join(c.svcDir, tmpDirName)
+}
+
+// CacheDir returns the directory holding the version cache and the
+// cross-process refresh stamps. Every consumer derives the path from here
+// rather than joining "cache" itself, so the name exists in exactly one place.
+func (c *Config) CacheDir() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return filepath.Join(c.svcDir, cacheDirName)
 }
 
 // SdkDir returns the storage directory of the specified SDK

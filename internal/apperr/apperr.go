@@ -58,6 +58,11 @@ const (
 	// to a GUI dialog from a headless command is exactly the popup the CLI
 	// contract forbids.
 	CliNoDialog Code = "cli-no-dialog"
+	// NoCachedVersions is raised by `svc versions --offline` when the version
+	// list was never fetched, so there is nothing local to print. It is a
+	// "not there" rather than a failure: the network was never consulted
+	// because the caller forbade it.
+	NoCachedVersions Code = "no-cached-versions"
 )
 
 // New builds the marked error. params may be nil; values are interpolated

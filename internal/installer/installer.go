@@ -212,18 +212,36 @@ func (s *Service) CheckSystemConflicts(sdkType string) ([]string, error) {
 	return s.pathMgr.DetectSystemConflicts(sdkType, keys), nil
 }
 
-func (s *Service) GetRemoteVersions(sdkType string) ([]sdk.VersionInfo, error) {
+// versionFetcher resolves one SDK identifier to its registered fetcher, after
+// the two checks every version entry point owes a caller: the service must be
+// wired, and the identifier must be a plain path segment before anything
+// derives a filesystem path from it. An unregistered name yields the same
+// unknown-sdk-type marker the Wails binding has always produced, so the GUI and
+// the CLI cannot disagree about what a bad name means.
+//
+// The fetcher is returned rather than the SdkType because callers want
+// f.Type(): it is the canonical spelling, which the string the user typed is
+// not.
+func (s *Service) versionFetcher(sdkType string) (sdk.VersionFetcher, error) {
 	if s.registry == nil {
 		return nil, apperr.New(apperr.AppNotInitialized, nil)
 	}
 	if err := helpers.ValidatePathSegment(sdkType); err != nil {
 		return nil, err
 	}
-	t := sdk.SdkType(sdkType)
-	f := s.registry.Get(t)
+	f := s.registry.Get(sdk.SdkType(sdkType))
 	if f == nil {
 		return nil, apperr.New(apperr.UnknownSdkType, map[string]string{"sdk": sdkType})
 	}
+	return f, nil
+}
+
+func (s *Service) GetRemoteVersions(sdkType string) ([]sdk.VersionInfo, error) {
+	f, err := s.versionFetcher(sdkType)
+	if err != nil {
+		return nil, err
+	}
+	t := f.Type()
 
 	// Cache-first: return the cached list immediately (memory → disk) so the UI
 	// gets a usable list without waiting for a network round-trip. A background
@@ -238,11 +256,22 @@ func (s *Service) GetRemoteVersions(sdkType string) ([]sdk.VersionInfo, error) {
 		return cached, nil
 	}
 
-	versions, err := s.fetchAndCacheVersions(t, f)
+	return s.fetchAndCacheVersions(t, f)
+}
+
+// RefreshRemoteVersions fetches the remote version list now and caches it,
+// ignoring any copy already cached. It is the synchronous half of
+// GetRemoteVersions, split out because three callers need exactly that and must
+// not each grow their own copy of the proxy-injection and per-SDK-lock dance:
+// the GUI's cache-miss path (through GetRemoteVersions), `svc versions
+// --refresh`, and the detached `svc __refresh` child that outlives the command
+// which spawned it.
+func (s *Service) RefreshRemoteVersions(sdkType string) ([]sdk.VersionInfo, error) {
+	f, err := s.versionFetcher(sdkType)
 	if err != nil {
 		return nil, err
 	}
-	return versions, nil
+	return s.fetchAndCacheVersions(f.Type(), f)
 }
 
 // fetchAndCacheVersions fetches the remote version list through f, stores it in

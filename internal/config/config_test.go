@@ -168,3 +168,29 @@ func TestLoad_MissingFileCreatesConfig(t *testing.T) {
 		t.Errorf("config.json was not created on first load: %v", err)
 	}
 }
+
+// TestCacheDir covers the layout of the version-cache directory and, more
+// importantly, that it follows SetSvcDir. appcore.Bootstrap applies an install
+// path override with SetSvcDir and only then points the version cache at
+// CacheDir(); a cache path computed from the old svcDir would leave the CLI
+// reading one home while its detached refresh child writes another.
+func TestCacheDir(t *testing.T) {
+	dir := t.TempDir()
+	c := newTestConfig(t, dir)
+	if got, want := c.CacheDir(), filepath.Join(dir, "cache"); got != want {
+		t.Errorf("CacheDir() = %q, want %q", got, want)
+	}
+
+	custom := filepath.Join(t.TempDir(), "elsewhere")
+	c.SetSvcDir(custom)
+	if got, want := c.CacheDir(), filepath.Join(custom, "cache"); got != want {
+		t.Errorf("after SetSvcDir, CacheDir() = %q, want %q", got, want)
+	}
+	// The name is a plain directory join, so it must never escape the SVC dir.
+	if !strings.HasPrefix(c.CacheDir(), custom) {
+		t.Errorf("CacheDir() = %q escapes the SVC dir %q", c.CacheDir(), custom)
+	}
+	if runtime.GOOS == "windows" && strings.Contains(c.CacheDir(), "/") {
+		t.Errorf("CacheDir() = %q mixes separators on windows", c.CacheDir())
+	}
+}

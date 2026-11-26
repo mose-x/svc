@@ -23,6 +23,7 @@ func (r *runner) addCommands(root *cobra.Command) {
 		r.newStatusCommand(),
 		r.newCurrentCommand(),
 		r.newDirCommand(),
+		r.newVersionsCommand(),
 		r.newURLCommand(),
 		r.newConflictsCommand(),
 		r.newPathCommand(),
@@ -30,6 +31,9 @@ func (r *runner) addCommands(root *cobra.Command) {
 		r.newLogsCommand(),
 		r.newSettingsCommand(),
 		r.newEndpointsCommand(),
+		// Hidden: the background carrier `svc versions` spawns. Registered last
+		// because it is the one command no user is ever meant to type.
+		r.newRefreshCommand(),
 	)
 }
 
@@ -75,6 +79,16 @@ func (r *runner) exactArgs(count int) cobra.PositionalArgs {
 
 func (r *runner) rangeArgs(minimum, maximum int) cobra.PositionalArgs {
 	return r.usageArgs(cobra.RangeArgs(minimum, maximum))
+}
+
+// usageError reports a mistake in how the command was written, recording cmd as
+// the usage target so the usage printed alongside it is the subcommand's own
+// rather than the root's. A command that validates its own flags needs this:
+// cobra sets the target for the parse failures it produces, but not for the ones
+// a RunE discovers after parsing succeeded.
+func (r *runner) usageError(cmd *cobra.Command, err error) error {
+	r.usageTarget = cmd
+	return &UsageError{err}
 }
 
 func (r *runner) usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
