@@ -263,6 +263,25 @@
     "confirmResetOne": "Reset {{sdk}} endpoint to default?",
     "confirmResetOneDesc": "This will reset the {{sdk}} download endpoint to the program default."
   },
+  "cli": {
+    "columnPath": "PATH",
+    "columnState": "State",
+    "columnVersions": "Versions",
+    "columnActive": "Active",
+    "columnDirectory": "Directory",
+    "columnSize": "Size",
+    "columnDefaultEndpoint": "Default endpoint",
+    "columnEndpoint": "Effective endpoint",
+    "stateImportable": "Importable",
+    "stateDisabled": "Disabled",
+    "availableSdks": "Available SDKs: {{list}}",
+    "installDir": "Install directory",
+    "activeSuffix": " (active)",
+    "noConflicts": "No system-level environment conflicts found",
+    "noVersionsInstalled": "No versions installed yet",
+    "totalSize": "Total",
+    "noStorage": "No SDK storage used yet"
+  },
   "errors": {
     "app-not-initialized": "The application is not fully initialized. Please restart the app and try again.",
     "unknown-sdk-type": "Unknown SDK type: {{sdk}}",
