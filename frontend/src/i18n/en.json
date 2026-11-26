@@ -280,7 +280,13 @@
     "noConflicts": "No system-level environment conflicts found",
     "noVersionsInstalled": "No versions installed yet",
     "totalSize": "Total",
-    "noStorage": "No SDK storage used yet"
+    "noStorage": "No SDK storage used yet",
+    "columnVersion": "Version",
+    "columnTags": "Tags",
+    "columnReleased": "Released",
+    "noVersionsMatch": "No versions match the filter",
+    "versionsFromCache": "Result is from the cache; refreshing in the background (use --refresh to fetch now)",
+    "versionsTruncated": "Showing the first {{shown}} of {{total}}"
   },
   "errors": {
     "app-not-initialized": "The application is not fully initialized. Please restart the app and try again.",
@@ -316,6 +322,7 @@
     "scheme-not-allowed": "Only http/https URLs are allowed; got scheme: {{scheme}}",
     "invalid-package-name": "Invalid npm package name: {{name}}",
     "protected-package": "{{name}} is protected and cannot be uninstalled",
-    "cli-no-dialog": "The command line cannot open a file picker; pass the path as an argument instead"
+    "cli-no-dialog": "The command line cannot open a file picker; pass the path as an argument instead",
+    "no-cached-versions": "No cached version list for {{sdk}}, and --offline forbids fetching it; retry without --offline"
   }
 }
