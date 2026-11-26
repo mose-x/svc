@@ -52,6 +52,12 @@ type ExecuteInput struct {
 	// the resolved mode does not depend on whether the test binary happens to
 	// be attached to a terminal.
 	Env *Environment
+	// Spawn starts a detached background child. Nil means spawnDetached, which
+	// is detach.Spawn with the child's stdio sent to the null device. Injectable
+	// for the same reason OpenHome is: a test must be able to assert that a
+	// command decided to spawn, with which arguments, without starting a process
+	// that would outlive the test and touch a real cache.
+	Spawn func(exe string, argv []string, logFile string) error
 }
 
 // Execute runs one CLI invocation and returns the process exit code. It never
@@ -86,6 +92,7 @@ type runner struct {
 	flags globalFlags
 
 	opts        Options
+	spawn       func(exe string, argv []string, logFile string) error
 	catalog     *i18n.Catalog
 	printer     *Printer
 	home        *appcore.Home
@@ -116,6 +123,10 @@ type globalFlags struct {
 func (r *runner) applyDefaults() {
 	if r.in.OpenHome == nil {
 		r.in.OpenHome = appcore.OpenHome
+	}
+	r.spawn = r.in.Spawn
+	if r.spawn == nil {
+		r.spawn = spawnDetached
 	}
 	if r.in.Stdout == nil {
 		r.in.Stdout = io.Discard

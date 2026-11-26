@@ -190,7 +190,7 @@ func (h *Home) Bootstrap(ctx context.Context, rt wailsrt.Runtime, lvl Level) (*C
 	// version cache at ~/.svc/cache. Both must be (re)initialised after any
 	// SetSvcDir override above so the files land in the active SVC dir.
 	sdk.InitMirrorsFile(h.Cfg.SvcDir())
-	sdk.InitVersionCacheDir(filepath.Join(h.Cfg.SvcDir(), "cache"))
+	sdk.InitVersionCacheDir(h.Cfg.CacheDir())
 
 	if lvl >= LevelWrite {
 		// One-time shims setup: creates the shims dir, installs the shim binary

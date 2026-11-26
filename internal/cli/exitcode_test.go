@@ -93,6 +93,7 @@ func TestExitCodeForCode(t *testing.T) {
 		{"unknown-sdk-type", ExitNotFound},
 		{"version-dir-missing", ExitNotFound},
 		{"no-asset", ExitNotFound},
+		{"no-cached-versions", ExitNotFound},
 		{"checksum-mismatch", ExitIntegrity},
 		{"sdk-incomplete", ExitIntegrity},
 		{"version-mismatch", ExitIntegrity},

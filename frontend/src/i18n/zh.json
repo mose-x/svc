@@ -280,7 +280,13 @@
     "noConflicts": "未发现系统级环境配置冲突",
     "noVersionsInstalled": "尚未安装任何版本",
     "totalSize": "合计",
-    "noStorage": "尚无任何 SDK 占用磁盘空间"
+    "noStorage": "尚无任何 SDK 占用磁盘空间",
+    "columnVersion": "版本",
+    "columnTags": "标记",
+    "columnReleased": "发布日期",
+    "noVersionsMatch": "没有符合筛选条件的版本",
+    "versionsFromCache": "结果来自缓存，正在后台刷新（使用 --refresh 立即拉取）",
+    "versionsTruncated": "仅显示前 {{shown}} 个，共 {{total}} 个"
   },
   "errors": {
     "app-not-initialized": "应用尚未完全初始化，请重启应用后重试",
@@ -316,6 +322,7 @@
     "scheme-not-allowed": "仅支持 http/https URL，当前协议：{{scheme}}",
     "invalid-package-name": "无效的 npm 包名：{{name}}",
     "protected-package": "{{name}} 为受保护包，无法卸载",
-    "cli-no-dialog": "命令行模式下无法打开文件选择对话框，请直接以参数形式传入路径"
+    "cli-no-dialog": "命令行模式下无法打开文件选择对话框，请直接以参数形式传入路径",
+    "no-cached-versions": "本地没有 {{sdk}} 的版本缓存，--offline 模式下无法联网获取；去掉 --offline 后重试"
   }
 }
