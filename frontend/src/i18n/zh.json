@@ -288,7 +288,13 @@
     "versionsFromCache": "结果来自缓存，正在后台刷新（使用 --refresh 立即拉取）",
     "versionsTruncated": "仅显示前 {{shown}} 个，共 {{total}} 个",
     "waitingForLock": "另一个 svc 操作正在进行中，等待其完成…",
-    "alreadyActive": "{{version}} 已经是当前激活版本"
+    "alreadyActive": "{{version}} 已经是当前激活版本",
+    "freedBytes": "已释放 {{size}}",
+    "cleanLogsConfirm": "删除全部 {{count}} 个日志文件？",
+    "cleanLogsDesc": "今天的活动日志会被重建为空文件；此操作不可撤销",
+    "cleanInactiveConfirm": "删除 {{sdk}} 的 {{count}} 个非激活版本？",
+    "cleanInactiveDesc": "只保留当前激活版本；此操作不可撤销",
+    "removedVersions": "已删除 {{count}} 个版本"
   },
   "errors": {
     "app-not-initialized": "应用尚未完全初始化，请重启应用后重试",

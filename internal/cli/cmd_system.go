@@ -166,15 +166,21 @@ func (r *runner) printStorage(result StorageResult) {
 	})
 }
 
-// newLogsCommand builds `svc logs` and its three read-only subcommands. The
-// destructive half of the GUI's log panel (`clean`, `rm`) is a change and
-// belongs to P4, where it gets a confirmation prompt.
+// newLogsCommand builds `svc logs` and its subcommands. The read-only three
+// list, print and locate the log files; `rm` deletes some of them and is
+// implemented in cmd_clean.go next to the rest of the destructive commands,
+// because it shares their result envelope and their confirmation discipline.
 func (r *runner) newLogsCommand() *cobra.Command {
 	logs := &cobra.Command{
 		Use:   "logs",
 		Short: "Inspect svc's own log files",
 	}
-	logs.AddCommand(r.newLogsListCommand(), r.newLogsShowCommand(), r.newLogsDirCommand())
+	logs.AddCommand(
+		r.newLogsListCommand(),
+		r.newLogsShowCommand(),
+		r.newLogsDirCommand(),
+		r.newLogsRemoveCommand(),
+	)
 	return logs
 }
 

@@ -174,8 +174,13 @@ func TestCliCatalogGroupHasNoDeadKeys(t *testing.T) {
 // render, each with an exact counterpart in the home page. The second are the
 // sentences the mutating commands print -- every confirmation question, its
 // explanation, and every success or warning toast has a literal counterpart in
-// DetailPanel.tsx, so a CLI that grew its own wording for "Uninstall Go 1.22.0?"
-// would be caught here rather than by a user noticing the two shells disagree.
+// DetailPanel.tsx, PathModal.tsx or SettingsPage.tsx, so a CLI that grew its own
+// wording for "Uninstall Go 1.22.0?" would be caught here rather than by a user
+// noticing the two shells disagree.
+//
+// The exceptions are deliberate and listed in cmd_clean.go: `clean logs` and
+// `clean inactive` port bindings no component calls, so there is no GUI sentence
+// to borrow and their wording lives in the `cli` group instead.
 func TestCliWordingIsSharedWithTheGUI(t *testing.T) {
 	shared := []string{
 		"path.sdkColumn",
@@ -204,6 +209,12 @@ func TestCliWordingIsSharedWithTheGUI(t *testing.T) {
 		"detail.uninstallSuccess",
 		"detail.activeVersionDeleted",
 		"detail.pathBinaryTitle",
+		"path.importConfirm",
+		"path.importConfirmDesc",
+		"path.importSuccess",
+		"sidebar.importConfirm",
+		"sidebar.importConfirmDesc",
+		"sidebar.importSuccess",
 		"app.configured",
 		"app.notConfigured",
 		"app.inPathOnly",
@@ -213,9 +224,18 @@ func TestCliWordingIsSharedWithTheGUI(t *testing.T) {
 		"path.noSdkDetected",
 		"settings.filename",
 		"settings.tmpCache",
+		"settings.cleanSuccess",
 		"logs.noLogs",
 		"logs.size",
 		"logs.modified",
+		"logs.deleteConfirm",
+		"logs.deleteConfirmDesc",
+		"logs.deleteSuccess",
+		"logs.deleteFail",
+		"logs.cleanSelectedConfirm",
+		"logs.cleanSelectedDesc",
+		"logs.cleanSuccess",
+		"logs.cleanFail",
 		"settings.noContent",
 		"sidebar.loadingSdkDetail",
 	}

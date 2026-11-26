@@ -30,10 +30,12 @@ func (r *runner) addCommands(root *cobra.Command) {
 		r.newReinstallCommand(),
 		r.newSwitchCommand(),
 		r.newUninstallCommand(),
+		r.newImportCommand(),
 		r.newURLCommand(),
 		r.newConflictsCommand(),
 		r.newPathCommand(),
 		r.newStorageCommand(),
+		r.newCleanCommand(),
 		r.newLogsCommand(),
 		r.newSettingsCommand(),
 		r.newEndpointsCommand(),
@@ -131,6 +133,12 @@ func (r *runner) rangeArgs(minimum, maximum int) cobra.PositionalArgs {
 	return r.usageArgs(cobra.RangeArgs(minimum, maximum))
 }
 
+// atLeastArgs is the same wrapper over cobra's MinimumNArgs, for the commands
+// whose arity has a floor and no ceiling.
+func (r *runner) atLeastArgs(count int) cobra.PositionalArgs {
+	return r.usageArgs(cobra.MinimumNArgs(count))
+}
+
 // usageError reports a mistake in how the command was written, recording cmd as
 // the usage target so the usage printed alongside it is the subcommand's own
 // rather than the root's. A command that validates its own flags needs this:
@@ -186,6 +194,18 @@ func (r *runner) sdkCompletion(cmd *cobra.Command, args []string, toComplete str
 func (r *runner) sdkThenNothing(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return r.sdkCompletion(cmd, args, toComplete)
+}
+
+// sdkThenFile is sdkThenNothing for a `<sdk> <path>` command: the first
+// argument is still an SDK identifier, but the second is a path, and a path is
+// the one thing the shell itself completes better than svc could. Returning
+// ShellCompDirectiveDefault is what hands the line back to the shell's own
+// filename completion instead of suppressing it.
+func (r *runner) sdkThenFile(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveDefault
 	}
 	return r.sdkCompletion(cmd, args, toComplete)
 }

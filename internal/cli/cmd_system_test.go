@@ -395,9 +395,11 @@ func TestLogsShowReportsAnEmptyFile(t *testing.T) {
 
 // TestLogsAloneIsHelpNotAnError pins the parent-command behaviour: `svc logs`
 // with no subcommand lists them on stdout and exits 0, because the user asked
-// for the command and got an answer rather than a failure.
+// for the command and got an answer rather than a failure. `svc clean` is the
+// same shape and the same answer, even though every one of its subcommands
+// deletes something: the parent itself deletes nothing.
 func TestLogsAloneIsHelpNotAnError(t *testing.T) {
-	for _, args := range [][]string{{"logs"}, {"settings"}, {"endpoints"}} {
+	for _, args := range [][]string{{"logs"}, {"settings"}, {"endpoints"}, {"clean"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			code, s := pipedRun(t, nil, args...)
 			if code != ExitOK {
