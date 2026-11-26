@@ -263,6 +263,25 @@
     "confirmResetOne": "恢复 {{sdk}} 端点为默认？",
     "confirmResetOneDesc": "确认后将恢复 {{sdk}} 的下载端点为程序默认地址"
   },
+  "cli": {
+    "columnPath": "PATH",
+    "columnState": "状态",
+    "columnVersions": "版本数",
+    "columnActive": "激活版本",
+    "columnDirectory": "目录",
+    "columnSize": "大小",
+    "columnDefaultEndpoint": "默认端点",
+    "columnEndpoint": "生效端点",
+    "stateImportable": "可导入",
+    "stateDisabled": "已停用",
+    "availableSdks": "可用的 SDK：{{list}}",
+    "installDir": "安装目录",
+    "activeSuffix": "（当前）",
+    "noConflicts": "未发现系统级环境配置冲突",
+    "noVersionsInstalled": "尚未安装任何版本",
+    "totalSize": "合计",
+    "noStorage": "尚无任何 SDK 占用磁盘空间"
+  },
   "errors": {
     "app-not-initialized": "应用尚未完全初始化，请重启应用后重试",
     "unknown-sdk-type": "未知的 SDK 类型：{{sdk}}",
