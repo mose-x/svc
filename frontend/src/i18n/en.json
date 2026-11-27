@@ -289,6 +289,7 @@
     "versionsTruncated": "Showing the first {{shown}} of {{total}}",
     "waitingForLock": "Another svc operation is in progress; waiting for it to finish…",
     "alreadyActive": "{{version}} is already the active version",
+    "downloadURL": "Download URL",
     "freedBytes": "Freed {{size}}",
     "cleanLogsConfirm": "Delete all {{count}} log file(s)?",
     "cleanLogsDesc": "Today's active log is recreated empty. This action cannot be undone.",
