@@ -294,7 +294,11 @@
     "cleanLogsDesc": "Today's active log is recreated empty. This action cannot be undone.",
     "cleanInactiveConfirm": "Delete the {{count}} inactive version(s) of {{sdk}}?",
     "cleanInactiveDesc": "Only the active version is kept. This action cannot be undone.",
-    "removedVersions": "Removed {{count}} version(s)"
+    "removedVersions": "Removed {{count}} version(s)",
+    "stateNotInstalled": "Not installed",
+    "noPackageManagers": "No package managers are available for {{sdk}}",
+    "noActiveVersion": "{{sdk}} has no active version",
+    "registryModeLabel": "Mode"
   },
   "errors": {
     "app-not-initialized": "The application is not fully initialized. Please restart the app and try again.",
