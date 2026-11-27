@@ -270,15 +270,23 @@ func TestDoctorReportsABrokenActiveVersion(t *testing.T) {
 		}
 	}
 	// An active version with no directory also has no shims.json entry, so the
-	// two checks fire together; the shim binary was installed by this same run's
-	// startup, which is the repair the summary counts.
+	// two checks fire together.
 	if got := checkNamed(t, result, checkShimsConfig); got.Status != doctorBroken {
 		t.Errorf("the shims-config check is %+v, want broken too", got)
 	}
-	// The failure sentence the run exits with is the summary, rendered from the
-	// catalog rather than assembled in English.
-	if want := catalogWord(t, "zh", "cli.doctorIssues", map[string]string{"broken": "2", "repaired": "1"}); !strings.Contains(s.stderr.String(), want) {
-		t.Errorf("stderr = %q, want %q", s.stderr, want)
+	// The total is NOT asserted here, and that is not an oversight. An active
+	// SDK makes checkSystemConflicts ask pathmgr about the machine, which on
+	// Unix reads /etc/profile, /etc/paths and friends -- files the test does not
+	// own and cannot fake. A GitHub Linux runner has Go in one of them, so this
+	// home reports three broken checks there and two on macOS. Asserting a count
+	// would pin the runner's /etc, not svc's behaviour; the summary sentence
+	// itself is asserted in TestDoctorReportsShimsNotOnPath, where nothing is
+	// active and the conflict check has no SDK to ask about.
+	if result.Broken < 2 {
+		t.Errorf("broken = %d, want at least the two checks above: %+v", result.Broken, result.Checks)
+	}
+	if code != ExitError {
+		t.Errorf("a broken report exits %d, want %d", code, ExitError)
 	}
 }
 
@@ -325,7 +333,8 @@ func TestDoctorReportsShimsNotOnPath(t *testing.T) {
 	if code != ExitError {
 		t.Fatalf("exit %d, want %d; stderr:\n%s", code, ExitError, s.stderr)
 	}
-	check := checkNamed(t, doctorResult(t, s), checkShimsOnPath)
+	result := doctorResult(t, s)
+	check := checkNamed(t, result, checkShimsOnPath)
 	if check.Status != doctorBroken {
 		t.Fatalf("the shims-on-path check is %+v, want broken", check)
 	}
@@ -334,6 +343,18 @@ func TestDoctorReportsShimsNotOnPath(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".svc", "shims")); err != nil {
 		t.Errorf("the shims directory does not exist, so this run measured the wrong thing: %v", err)
+	}
+	// Nothing is active in this home, so the three per-SDK checks -- including
+	// the one that asks pathmgr about the machine's own /etc -- have no SDK to
+	// ask about, and the counts are therefore the same on every platform. This
+	// is the run that pins the summary sentence the failed run exits with: it
+	// is rendered from the catalog rather than assembled in English.
+	if result.Broken != 1 || result.Repaired != 1 {
+		t.Errorf("the counts are repaired=%d broken=%d, want 1 and 1: %+v", result.Repaired, result.Broken, result.Checks)
+	}
+	want := catalogWord(t, "zh", "cli.doctorIssues", map[string]string{"broken": "1", "repaired": "1"})
+	if !strings.Contains(s.stderr.String(), want) {
+		t.Errorf("stderr = %q, want %q", s.stderr, want)
 	}
 }
 
