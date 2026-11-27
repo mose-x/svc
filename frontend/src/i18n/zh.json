@@ -317,7 +317,10 @@
     "doctorRunSwitch": "运行 svc switch <sdk> <version> 重新生成 shim 配置",
     "doctorShimReinstalled": "已重新安装 shim 程序",
     "doctorAllOk": "全部检查通过",
-    "doctorIssues": "{{broken}} 项异常，{{repaired}} 项已自动修复"
+    "doctorIssues": "{{broken}} 项异常，{{repaired}} 项已自动修复",
+    "selfRollbackDesc": "将从上次升级时备份的 .bak 文件恢复上一个版本，当前版本会被覆盖；回滚由后台脚本在 svc 退出后完成，不会自动重新启动 svc，完成后请重新运行",
+    "selfUpdateApplied": "替换脚本已接管，svc 即将退出；新版本不会自动启动，替换完成后请重新运行 svc",
+    "selfRollbackApplied": "回滚脚本已接管，svc 即将退出；恢复后的版本不会自动启动，完成后请重新运行 svc"
   },
   "errors": {
     "app-not-initialized": "应用尚未完全初始化，请重启应用后重试",
