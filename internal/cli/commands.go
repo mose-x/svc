@@ -40,6 +40,7 @@ func (r *runner) addCommands(root *cobra.Command) {
 		r.newPkgCommand(),
 		r.newSettingsCommand(),
 		r.newEndpointsCommand(),
+		r.newDoctorCommand(),
 		// Hidden: the background carrier `svc versions` spawns. Registered last
 		// because it is the one command no user is ever meant to type.
 		r.newRefreshCommand(),
