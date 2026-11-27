@@ -18,10 +18,32 @@ import (
 // never clobber it. Note ~/.npmrc is shared by every Node version SVC
 // manages — the switch is user-global, not per-version.
 
+// The two registries both shells offer as one-click choices: NpmRegistrySection
+// renders them as the Official and China Mirror radio buttons, and the CLI
+// accepts them as the `official` and `china` aliases of
+// `svc pkg registry set`. Exported so the alias and the button can never drift
+// apart -- a third copy of either URL is a third place to forget.
 const (
-	npmRegistryOfficial = "https://registry.npmjs.org"
-	npmRegistryChina    = "https://registry.npmmirror.com"
+	// RegistryOfficial is npm's own default.
+	RegistryOfficial = "https://registry.npmjs.org"
+	// RegistryChina is the npmmirror.com mirror, which is what `cnpm` is
+	// installed from as well.
+	RegistryChina = "https://registry.npmmirror.com"
 )
+
+// protectedGlobalPackage is the one global package svc refuses to uninstall:
+// every operation in this file shells out to it, so removing it would break
+// the panel that just did.
+const protectedGlobalPackage = "npm"
+
+// ProtectedGlobalPackage reports whether name is one svc will not uninstall.
+//
+// UninstallGlobalPackage enforces this itself; the predicate is exported so a
+// caller can check before it asks the user to approve an operation that is
+// guaranteed to fail. `svc pkg global uninstall npm` is exactly that case.
+func ProtectedGlobalPackage(name string) bool {
+	return name == protectedGlobalPackage
+}
 
 // GetNpmRegistry returns the active Node.js installation's configured npm
 // registry, whitespace-trimmed and without a trailing slash (npm's default
@@ -141,7 +163,7 @@ func (s *Service) UninstallGlobalPackage(name string) error {
 	if err := s.requireActiveNode(name); err != nil {
 		return err
 	}
-	if name == "npm" {
+	if ProtectedGlobalPackage(name) {
 		return apperr.New(apperr.ProtectedPackage, map[string]string{"name": name})
 	}
 	return s.runScopedCommand("npm", sdk.NodeJS, "uninstall", "-g", name)
