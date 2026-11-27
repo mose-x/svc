@@ -179,16 +179,22 @@ func TestCliCatalogGroupHasNoDeadKeys(t *testing.T) {
 // Go 1.22.0?" would be caught here rather than by a user noticing the two
 // shells disagree.
 //
-// `about` and `self check` are the same discipline applied to the About tab:
-// its four row labels, its "up to date" toast, and the two sentences its update
-// modal is built from are reused rather than reworded. The one addition is
-// `cli.downloadURL`, a label the modal has no need for because it turns the URL
-// into a button -- and a terminal that printed a bare URL under nothing would
-// leave a reader guessing what the line was.
+// `about` and the `self` group are the same discipline applied to the About tab
+// and to the update modal: the four row labels, the "up to date" toast, the two
+// sentences the modal is built from, the button that doubles as `self update`'s
+// question, and the rollback question are all reused rather than reworded. The
+// one addition is `cli.downloadURL`, a label the modal has no need for because
+// it turns the URL into a button -- and a terminal that printed a bare URL under
+// nothing would leave a reader guessing what the line was.
 //
-// The exceptions are deliberate and listed in cmd_clean.go: `clean logs` and
-// `clean inactive` port bindings no component calls, so there is no GUI sentence
-// to borrow and their wording lives in the `cli` group instead.
+// The exceptions are deliberate. `clean logs` and `clean inactive` port bindings
+// no component calls, so there is no GUI sentence to borrow and their wording
+// lives in the `cli` group (see cmd_clean.go). `cli.selfRollbackDesc` is the
+// opposite case: the GUI sentence exists, `settings.rollbackConfirmDesc`, and
+// cannot be reused because it promises the app will restart -- which is the one
+// thing a terminal swap must not do. Borrowing it would have the CLI confirm an
+// outcome it then declines to produce, so it gets its own wording and the
+// question above it stays shared.
 func TestCliWordingIsSharedWithTheGUI(t *testing.T) {
 	shared := []string{
 		"path.sdkColumn",
@@ -283,6 +289,8 @@ func TestCliWordingIsSharedWithTheGUI(t *testing.T) {
 		"about.upToDate",
 		"about.newVersion",
 		"about.currentVersion",
+		"about.downloadAndInstall",
+		"settings.rollbackConfirm",
 		"settings.proxyCheckBaidu",
 		"settings.proxyCheckGoogle",
 		"settings.proxyCheckSuccess",

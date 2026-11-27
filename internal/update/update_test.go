@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"svc/internal/config"
+	"svc/internal/detach"
 	"svc/internal/downloader"
 	"svc/internal/proxy"
 )
@@ -310,4 +311,82 @@ func TestHasBackupForExe(t *testing.T) {
 			t.Error("hasBackupForExe(\"\") = true; want false")
 		}
 	})
+}
+
+// TestStartSwapScriptChoosesTheSpawnTheCallerAskedFor pins the dispatch
+// ApplyOptions.Relaunch controls.
+//
+// Nothing about the choice is visible in a returned error, and both branches
+// end up with the script running, so the assertion has to be about which
+// function was reached. The difference is the one the CLI contract is built
+// on: the relaunching branch inherits this process's descriptors and starts a
+// child that reopens the window, and the other sends the child's stdio to the
+// null device and reaps it. A test that launched a real script and only
+// checked for nil would pass either way.
+func TestStartSwapScriptChoosesTheSpawnTheCallerAskedFor(t *testing.T) {
+	exe, argv := trivialCommand()
+
+	var detached []detach.Options
+	var detachedArgs []string
+	originalSpawn, originalInherited := detachedSpawn, startInherited
+	detachedSpawn = func(gotExe string, gotArgv []string, opts detach.Options) error {
+		if gotExe != exe {
+			t.Errorf("detach received exe %q, want %q", gotExe, exe)
+		}
+		detachedArgs = gotArgv
+		detached = append(detached, opts)
+		return nil
+	}
+	inherited := 0
+	startInherited = func(gotExe string, gotArgv []string) error {
+		inherited++
+		return originalInherited(gotExe, gotArgv)
+	}
+	t.Cleanup(func() { detachedSpawn, startInherited = originalSpawn, originalInherited })
+
+	// The CLI's shape: no relaunch, so the script goes out through detach with
+	// its stdio on the null device -- an empty LogFile is that promise, and a
+	// log file here would mean a swap the user asked for from a terminal was
+	// appending to svc's diagnostics.
+	if err := startSwapScript(exe, argv, ApplyOptions{}); err != nil {
+		t.Fatalf("startSwapScript without relaunch: %v", err)
+	}
+	if inherited != 0 {
+		t.Errorf("the no-relaunch branch reached the inherited-stdio spawn %d times", inherited)
+	}
+	if len(detached) != 1 {
+		t.Fatalf("the no-relaunch branch spawned %d times, want exactly one", len(detached))
+	}
+	if detached[0].LogFile != "" {
+		t.Errorf("the detached swap script logs to %q, want the null device", detached[0].LogFile)
+	}
+	if detached[0].Dir != os.TempDir() {
+		t.Errorf("the detached swap script runs in %q, want %q", detached[0].Dir, os.TempDir())
+	}
+	if len(detachedArgs) != len(argv) {
+		t.Errorf("the detached swap script got argv %v, want %v", detachedArgs, argv)
+	}
+
+	// The GUI's shape: the pre-existing path, unchanged. It really starts the
+	// child, which is why the command is one that exits immediately.
+	detached, detachedArgs = nil, nil
+	if err := startSwapScript(exe, argv, ApplyOptions{Relaunch: true}); err != nil {
+		t.Fatalf("startSwapScript with relaunch: %v", err)
+	}
+	if inherited != 1 {
+		t.Errorf("the relaunching branch reached the inherited-stdio spawn %d times, want 1", inherited)
+	}
+	if len(detached) != 0 {
+		t.Errorf("the relaunching branch went through detach %d times; the GUI's script must inherit stdio and relaunch the binary", len(detached))
+	}
+}
+
+// TestApplyOptionsDefaultsToNoRelaunch pins the zero value: a caller that
+// builds ApplyOptions{} gets the CLI's behaviour, not the GUI's. Every existing
+// call site that wants a relaunch says so explicitly, which is what makes
+// "a new shell forgot to ask" fail safe rather than open a window.
+func TestApplyOptionsDefaultsToNoRelaunch(t *testing.T) {
+	if (ApplyOptions{}).Relaunch {
+		t.Error("the zero ApplyOptions relaunches; a caller that did not ask for a window must not get one")
+	}
 }

@@ -58,6 +58,17 @@ type ExecuteInput struct {
 	// command decided to spawn, with which arguments, without starting a process
 	// that would outlive the test and touch a real cache.
 	Spawn func(exe string, argv []string, logFile string) error
+	// Swap hands the running binary over to the platform swap script. Nil means
+	// swapBinary, which calls the Updater's own ApplyUpdate / RollbackUpdate
+	// with the relaunch left off.
+	//
+	// Injectable for the same reason Spawn is, and for a sharper one: the real
+	// thing writes a script that waits for THIS process to exit and then
+	// renames the binary it ran from, which under `go test` is the test
+	// executable. A test that let it run would leave a background process
+	// swapping the test binary out from under the suite that had just finished,
+	// on a delay of up to a minute.
+	Swap SwapFunc
 }
 
 // Execute runs one CLI invocation and returns the process exit code. It never
@@ -93,6 +104,7 @@ type runner struct {
 
 	opts        Options
 	spawn       func(exe string, argv []string, logFile string) error
+	swap        SwapFunc
 	catalog     *i18n.Catalog
 	printer     *Printer
 	home        *appcore.Home
@@ -128,6 +140,10 @@ func (r *runner) applyDefaults() {
 	r.spawn = r.in.Spawn
 	if r.spawn == nil {
 		r.spawn = spawnDetached
+	}
+	r.swap = r.in.Swap
+	if r.swap == nil {
+		r.swap = performSwap
 	}
 	if r.in.Stdout == nil {
 		r.in.Stdout = io.Discard
@@ -300,9 +316,13 @@ func (r *runner) bootstrap(level appcore.Level) (*appcore.Core, error) {
 
 // eventSink routes service events to this run's renderers.
 //
-// The self-update line is not wired yet: it belongs to `svc self update`, and
-// gets its renderer when that command lands. A nil handler drops the event
-// quietly, which is what RouteEvent is built to tolerate.
+// install:progress and update:progress share the ProgressRenderer: the two
+// events carry different structs and use different catalog keys for the same
+// stage tokens, but the three output modes, the tty redraw and the plain-mode
+// decimation are the same rules, and Render / RenderUpdate are the two entry
+// points into them. A renderer that has not been built yet leaves the handler
+// nil, which RouteEvent drops quietly rather than panicking inside a service
+// callback.
 //
 // The handlers are collected per event rather than once when the sink is
 // built. Capturing them early is how a renderer that does not exist yet gets
@@ -315,6 +335,7 @@ func (r *runner) eventSink() clirt.EventSink {
 		handlers := EventHandlers{}
 		if r.progress != nil {
 			handlers.InstallProgress = r.progress.Render
+			handlers.UpdateProgress = r.progress.RenderUpdate
 		}
 		if r.scan != nil {
 			handlers.ScanProgress = r.scan.Render

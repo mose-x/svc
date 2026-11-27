@@ -19,7 +19,7 @@ func TestBuildUpdateScript_containsHashAndCertutil(t *testing.T) {
 	const currentExe = `C:\svc\svc.exe`
 	const bak = `C:\svc\svc.exe.bak`
 	const newExe = `C:\tmp\svc_update_new.exe`
-	script := buildUpdateScript(pid, currentExe, bak, newExe, hash)
+	script := buildUpdateScript(pid, currentExe, bak, newExe, hash, true)
 
 	checks := []struct {
 		name string
@@ -73,7 +73,7 @@ func TestBuildRollbackScript_findstrPidMatch(t *testing.T) {
 	const pid = 4242
 	const currentExe = `C:\svc\svc.exe`
 	const bak = `C:\svc\svc.exe.bak`
-	script := buildRollbackScript(pid, bak, currentExe)
+	script := buildRollbackScript(pid, bak, currentExe, true)
 
 	checks := []struct {
 		name string
@@ -92,5 +92,87 @@ func TestBuildRollbackScript_findstrPidMatch(t *testing.T) {
 	}
 	if strings.Contains(script, "findstr /B") {
 		t.Errorf("buildRollbackScript still uses findstr /B (dead wait loop)\n--- script ---\n%s", script)
+	}
+}
+
+// trivialCommand is a child that starts and exits 0 on this platform, for the
+// tests that really launch one.
+func trivialCommand() (string, []string) {
+	return "cmd", []string{"/C", "exit 0"}
+}
+
+// TestBuildRelaunchBlock pins the two shapes of the .bat tail. The relaunching
+// one is the pair of lines the GUI has always run, byte for byte; the other is
+// nothing at all, which is what keeps `svc self update` from opening a window
+// when the swap finishes.
+func TestBuildRelaunchBlock(t *testing.T) {
+	got := buildRelaunchBlock(true, "Starting new version...", `C:\svc\svc.exe`)
+	want := "echo Starting new version...\nstart \"\" \"C:\\svc\\svc.exe\"\n"
+	if got != want {
+		t.Errorf("buildRelaunchBlock(true) = %q, want %q", got, want)
+	}
+	if off := buildRelaunchBlock(false, "Starting new version...", `C:\svc\svc.exe`); off != "" {
+		t.Errorf("buildRelaunchBlock(false) = %q, want nothing at all", off)
+	}
+}
+
+// TestBuildUpdateScript_NoRelaunch covers the CLI's half of ApplyOptions: the
+// same .bat over the same bytes, minus the launch. Everything that makes the
+// swap safe -- the PID wait, the backup, the move-then-copy replacement, the
+// certutil verify and its rollback, the stale-backup cleanup, the
+// self-delete -- has to survive, because a CLI update that skipped any of them
+// would be a different and worse update than the GUI's.
+func TestBuildUpdateScript_NoRelaunch(t *testing.T) {
+	const (
+		currentExe = `C:\svc\svc.exe`
+		bak        = `C:\svc\svc.exe.bak`
+		newExe     = `C:\tmp\svc_update_new.exe`
+	)
+	script := buildUpdateScript(4242, currentExe, bak, newExe, "abc", false)
+
+	for _, absent := range []string{
+		`start ""`,
+		"Starting new version",
+	} {
+		if strings.Contains(script, absent) {
+			t.Errorf("the no-relaunch update .bat still carries %q\n--- script ---\n%s", absent, script)
+		}
+	}
+	for _, present := range []string{
+		`tasklist /FI "PID eq 4242" /NH`,
+		`copy /Y "` + currentExe + `" "` + bak + `"`,
+		`move /Y "` + newExe + `" "` + currentExe + `"`,
+		`certutil -hashfile "` + currentExe + `" SHA256`,
+		`if /i not "%actual%"=="%expected%"`,
+		`del "%~f0"`,
+	} {
+		if !strings.Contains(script, present) {
+			t.Errorf("the no-relaunch update .bat lost %q\n--- script ---\n%s", present, script)
+		}
+	}
+}
+
+// TestBuildRollbackScript_NoRelaunch is the same assertion for the restore
+// path, which the CLI reaches through `svc self rollback`.
+func TestBuildRollbackScript_NoRelaunch(t *testing.T) {
+	const (
+		currentExe = `C:\svc\svc.exe`
+		bak        = `C:\svc\svc.exe.bak`
+	)
+	script := buildRollbackScript(4242, bak, currentExe, false)
+
+	for _, absent := range []string{`start ""`, "Starting restored version"} {
+		if strings.Contains(script, absent) {
+			t.Errorf("the no-relaunch rollback .bat still carries %q\n--- script ---\n%s", absent, script)
+		}
+	}
+	for _, present := range []string{
+		`tasklist /FI "PID eq 4242" /NH`,
+		`copy /Y "` + bak + `" "` + currentExe + `"`,
+		`del "%~f0"`,
+	} {
+		if !strings.Contains(script, present) {
+			t.Errorf("the no-relaunch rollback .bat lost %q\n--- script ---\n%s", present, script)
+		}
 	}
 }

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"svc/internal/apperr"
-	"svc/internal/helpers"
 )
 
 func getUpdateFilePath() string {
@@ -28,7 +27,10 @@ func backupPath(currentExe string) string {
 // relaunches. The hash is computed in Go BEFORE writing the script so the
 // .bat only needs certutil (a built-in Windows tool) for the post-copy check;
 // certutil output is parsed in-bat to compare against the embedded hash.
-func (u *Updater) ApplyUpdate() error {
+//
+// opts decides how the .bat is launched and whether it restarts the binary
+// afterwards; see ApplyOptions.
+func (u *Updater) ApplyUpdate(opts ApplyOptions) error {
 	currentExe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get current program path: %w", err)
@@ -52,20 +54,38 @@ func (u *Updater) ApplyUpdate() error {
 	bak := backupPath(currentExe)
 	scriptPath := filepath.Join(os.TempDir(), "svc_updater.bat")
 	pid := os.Getpid()
-	scriptContent := buildUpdateScript(pid, currentExe, bak, newExe, expectedHash)
+	scriptContent := buildUpdateScript(pid, currentExe, bak, newExe, expectedHash, opts.Relaunch)
 
 	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0644); err != nil {
 		return fmt.Errorf("failed to create update script: %w", err)
 	}
 
-	cmd := helpers.CreateCmd("cmd", "/C", scriptPath)
-	cmd.Dir = os.TempDir()
-	if err := cmd.Start(); err != nil {
+	if err := startSwapScript("cmd", []string{"/C", scriptPath}, opts); err != nil {
 		return fmt.Errorf("failed to launch update script: %w", err)
 	}
 
 	u.rt.Quit()
 	return nil
+}
+
+// buildRelaunchBlock renders the two .bat lines that start the binary the swap
+// just put in place -- or nothing at all when relaunch is false.
+//
+// The GUI passes true: the window Quit closed has to come back, or "update
+// installed" ends with the application simply gone. The CLI passes false,
+// because `svc` with no arguments launches the GUI, so a .bat that restarted
+// the binary would open a window at the end of a terminal command. That is the
+// one thing the CLI contract forbids outright, and it is also why the CLI's
+// .bat goes out through detach: `start` gives the child a console of its own,
+// and a relaunching .bat that inherited this process's handles would print its
+// own echo lines after the command's result had been written.
+//
+// The .bat self-deletes either way; only the launch is conditional.
+func buildRelaunchBlock(relaunch bool, message, exe string) string {
+	if !relaunch {
+		return ""
+	}
+	return fmt.Sprintf("echo %s\nstart \"\" \"%s\"\n", message, exe)
 }
 
 // buildUpdateScript renders the .bat body for ApplyUpdate. Extracted so the
@@ -90,7 +110,8 @@ func (u *Updater) ApplyUpdate() error {
 // `if /i` compares case-insensitively because certutil emits uppercase hex on
 // some Windows versions and lowercase on others, while sha256OfFile always
 // returns lowercase.
-func buildUpdateScript(pid int, currentExe, bak, newExe, expectedHash string) string {
+func buildUpdateScript(pid int, currentExe, bak, newExe, expectedHash string, relaunch bool) string {
+	launch := buildRelaunchBlock(relaunch, "Starting new version...", currentExe)
 	return fmt.Sprintf(`@echo off
 echo Waiting for application to close...
 set /a timeout=60
@@ -136,17 +157,18 @@ if /i not "%%actual%%"=="%%expected%%" (
     copy /Y "%s" "%s" >NUL
     exit /b 1
 )
-echo Starting new version...
-start "" "%s"
-del "%%~f0"
-`, pid, pid, bak, bak, currentExe, bak, newExe, currentExe, newExe, currentExe, newExe, expectedHash, currentExe, bak, currentExe, currentExe)
+%sdel "%%~f0"
+`, pid, pid, bak, bak, currentExe, bak, newExe, currentExe, newExe, currentExe, newExe, expectedHash, currentExe, bak, currentExe, launch)
 }
 
 // RollbackUpdate restores the .bak binary created by the previous ApplyUpdate.
 // Fails with a clear message if no backup exists (first install or user deleted it).
 // Uses the same wait-then-rename pattern as ApplyUpdate because the running
 // .exe is locked by Windows until the process exits.
-func (u *Updater) RollbackUpdate() error {
+//
+// opts decides how the .bat is launched and whether it restarts the binary
+// afterwards; see ApplyOptions.
+func (u *Updater) RollbackUpdate(opts ApplyOptions) error {
 	currentExe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get current program path: %w", err)
@@ -158,15 +180,13 @@ func (u *Updater) RollbackUpdate() error {
 
 	scriptPath := filepath.Join(os.TempDir(), "svc_rollback.bat")
 	pid := os.Getpid()
-	scriptContent := buildRollbackScript(pid, bak, currentExe)
+	scriptContent := buildRollbackScript(pid, bak, currentExe, opts.Relaunch)
 
 	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0644); err != nil {
 		return fmt.Errorf("failed to create rollback script: %w", err)
 	}
 
-	cmd := helpers.CreateCmd("cmd", "/C", scriptPath)
-	cmd.Dir = os.TempDir()
-	if err := cmd.Start(); err != nil {
+	if err := startSwapScript("cmd", []string{"/C", scriptPath}, opts); err != nil {
 		return fmt.Errorf("failed to launch rollback script: %w", err)
 	}
 
@@ -184,7 +204,8 @@ func (u *Updater) RollbackUpdate() error {
 // the loop would be dead code, letting the script overwrite the still-running
 // exe. The space-delimited form cannot false-match PIDs like 42421 or 14242
 // for target 4242 because the PID column is always space-padded.
-func buildRollbackScript(pid int, bak, currentExe string) string {
+func buildRollbackScript(pid int, bak, currentExe string, relaunch bool) string {
+	launch := buildRelaunchBlock(relaunch, "Starting restored version...", currentExe)
 	return fmt.Sprintf(`@echo off
 echo Waiting for application to close...
 set /a timeout=60
@@ -205,8 +226,6 @@ if errorlevel 1 (
     echo Rollback failed!
     exit /b 1
 )
-echo Starting restored version...
-start "" "%s"
-del "%%~f0"
-`, pid, pid, bak, currentExe, currentExe)
+%sdel "%%~f0"
+`, pid, pid, bak, currentExe, launch)
 }

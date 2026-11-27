@@ -1,16 +1,23 @@
 package cli
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
 
+	"svc/internal/appcore"
+	"svc/internal/apperr"
+	"svc/internal/svclock"
 	"svc/internal/update"
 )
 
@@ -67,6 +74,14 @@ type release struct {
 // is not known until after it is listening.
 func newReleaseFeed(t *testing.T, releases []release) string {
 	t.Helper()
+	return newReleaseFeedPublishing(t, releases, updateTestDigest)
+}
+
+// newReleaseFeedPublishing is newReleaseFeed with the published digest chosen by
+// the caller, which is how a test drives the checksum gate into failing: the
+// bytes served stay the same and only the manifest lies about them.
+func newReleaseFeedPublishing(t *testing.T, releases []release, digest string) string {
+	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/releases", func(w http.ResponseWriter, req *http.Request) {
 		rewritten := make([]release, len(releases))
@@ -94,22 +109,42 @@ func newReleaseFeed(t *testing.T, releases []release) string {
 				if asset.Name == updateTestAsset {
 					continue
 				}
-				_, _ = io.WriteString(w, updateTestDigest+"  "+asset.Name+"\n")
+				_, _ = io.WriteString(w, digest+"  "+asset.Name+"\n")
 			}
 		}
 	})
+	// Every other asset is served at /<name> with the same bytes, so a command
+	// that downloads one really downloads something.
+	for _, entry := range releases {
+		for _, asset := range entry.Assets {
+			if asset.Name == updateTestAsset {
+				continue
+			}
+			mux.HandleFunc("/"+asset.Name, func(w http.ResponseWriter, req *http.Request) {
+				_, _ = w.Write(updateTestPayload)
+			})
+		}
+	}
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server.URL + "/releases/latest"
 }
 
-// updateTestAsset is the checksum manifest's own asset name, and
-// updateTestDigest the hash it publishes for every other asset. Both are fixed
-// so a test can assert the value arrived in the result rather than merely that
-// something did.
-const (
-	updateTestAsset  = "sha256sums.txt"
-	updateTestDigest = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+// updateTestAsset is the checksum manifest's own asset name.
+const updateTestAsset = "sha256sums.txt"
+
+// updateTestPayload is the bytes every other asset on the loopback feed is
+// served with, and updateTestDigest the hash the manifest publishes for them.
+//
+// The digest is computed rather than written out, and that is what lets a test
+// drive `svc self update` all the way through DownloadUpdate: a manifest
+// carrying a made-up hash would fail the checksum gate every time, so the only
+// reachable outcome would be the failure and the happy path would be untested.
+// A test can still assert the value arrived, because the constant it compares
+// against is the same one the manifest was built from.
+var (
+	updateTestPayload = []byte("svc self-update test payload\n")
+	updateTestDigest  = fmt.Sprintf("%x", sha256.Sum256(updateTestPayload))
 )
 
 func writeJSONBody(w http.ResponseWriter, value any) error {
@@ -335,4 +370,594 @@ func topLevelKeys(document map[string]json.RawMessage) []string {
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+// --- `svc self update` and `svc self rollback` --------------------------------
+//
+// The swap itself is never allowed to run in a test, and the reason is concrete
+// rather than theoretical: ApplyUpdate and RollbackUpdate write a script that
+// waits for THIS process to exit and then renames the binary it ran from, which
+// under `go test` is the test executable. A suite that let one go would leave a
+// background process swapping the test binary out from under itself up to a
+// minute later. So ExecuteInput.Swap stands in for it, records what it was asked
+// to do, and the scripts themselves are pinned where they can be -- in the
+// builders in internal/update.
+//
+// What the injection costs is nothing much: the command's whole job is the
+// orchestration around the swap (check, ask, lock, download, hand over, report)
+// and all of that still runs for real, against the same loopback release feed
+// `self check` uses.
+
+// swapRecorder records the binary swaps a run asked for.
+type swapRecorder struct {
+	actions []SwapAction
+	opts    []update.ApplyOptions
+	// err, when set, is what the swap reports instead of succeeding.
+	err error
+}
+
+func (rec *swapRecorder) fn() SwapFunc {
+	return func(_ *update.Updater, action SwapAction, opts update.ApplyOptions) error {
+		rec.actions = append(rec.actions, action)
+		rec.opts = append(rec.opts, opts)
+		return rec.err
+	}
+}
+
+// called reports whether a swap was handed over at all.
+func (rec *swapRecorder) called() bool { return len(rec.actions) > 0 }
+
+// assertNoRelaunch is the red line: every swap a CLI command hands over must
+// leave the relaunch off, or the script reopens a window at the end of a
+// terminal command and, on the way out, prints its own lines into a stdout that
+// has already been closed.
+func (rec *swapRecorder) assertNoRelaunch(t *testing.T) {
+	t.Helper()
+	if len(rec.opts) == 0 {
+		t.Fatal("no swap was handed over, so there is nothing to check")
+	}
+	for i, opts := range rec.opts {
+		if opts.Relaunch {
+			t.Errorf("swap %d relaunched the binary: a terminal command must never open a window", i)
+		}
+	}
+}
+
+// pipedEnv is an invocation whose stdout is a pipe: plain mode, no colour, no
+// notes. terminalEnv is the same run at a terminal with colour off, so notes are
+// written and every assertion can stay on plain text.
+var (
+	pipedEnv    = &Environment{}
+	terminalEnv = &Environment{StdinTTY: true, StdoutTTY: true, EnvNoColor: "1"}
+)
+
+// selfRun drives one `svc self` invocation against an injected about.json, an
+// injected swap and a chosen environment.
+func selfRun(t *testing.T, home string, about []byte, swap SwapFunc, env *Environment, answers string, args ...string) (int, *streams) {
+	t.Helper()
+	s := newStreams()
+	s.stdin.WriteString(answers)
+	code := Execute(ExecuteInput{
+		Args:      args,
+		Catalogs:  shippedCatalogs(t),
+		AboutJSON: about,
+		Stdin:     s.stdin,
+		Stdout:    s.stdout,
+		Stderr:    s.stderr,
+		OpenHome:  homeAt(t, home),
+		Env:       env,
+		Swap:      swap,
+	})
+	return code, s
+}
+
+// redirectTempDir points os.TempDir at a fresh temporary directory for the rest
+// of the test.
+//
+// DownloadUpdate writes to a FIXED name inside it -- getUpdateFilePath has no
+// home of its own to be injected with -- so a test that left the payload in the
+// machine's real temp dir would collide with every other svc process on the box,
+// and with the next run of itself.
+func redirectTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	t.Setenv("TMP", dir)
+	t.Setenv("TEMP", dir)
+	return dir
+}
+
+// updatePayloadPath is where DownloadUpdate leaves the bytes, per platform.
+func updatePayloadPath(dir string) string {
+	name := "svc_update_new"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(dir, name)
+}
+
+func TestSelfUpdateReportsUpToDateWithoutAsking(t *testing.T) {
+	const current = "2.1.0"
+	feed := newReleaseFeed(t, []release{released(t, current, "the release you are running")})
+	home := t.TempDir()
+	about := aboutJSON(t, testAppInfo(current, feed))
+	rec := &swapRecorder{}
+
+	// --yes is passed and still nothing is asked, because there is nothing to
+	// do: the window toasts "you are up to date" and closes the modal.
+	code, s := selfRun(t, home, about, rec.fn(), pipedEnv, "", "--lang", "en", "self", "update", "--yes")
+	if code != ExitOK {
+		t.Fatalf("svc self update on the newest build = exit %d, want %d; stderr:\n%s", code, ExitOK, s.stderr)
+	}
+	if want := catalogWord(t, "en", "about.upToDate", nil); !strings.Contains(s.stdout.String(), want) {
+		t.Errorf("stdout does not carry %q:\n%s", want, s.stdout)
+	}
+	if rec.called() {
+		t.Errorf("a build that is already current handed over a swap: %v", rec.actions)
+	}
+
+	code, s = selfRun(t, home, about, rec.fn(), pipedEnv, "", "--json", "self", "update", "--yes")
+	if code != ExitOK {
+		t.Fatalf("svc --json self update = exit %d, want %d", code, ExitOK)
+	}
+	var result SelfApplyResult
+	decodeJSON(t, s, &result)
+	if result.Applied {
+		t.Errorf("applied = true for a run that changed nothing")
+	}
+	if result.Action != string(SwapUpdate) || result.From != current {
+		t.Errorf("result = %+v, want action %q from %q", result, SwapUpdate, current)
+	}
+	// A document is emitted even though nothing happened, so a cron job can run
+	// `svc self update --json --yes` unconditionally and always parse one. To
+	// and filename stay out: there is no version and no asset to name.
+	var document map[string]json.RawMessage
+	decodeJSON(t, s, &document)
+	if got, want := topLevelKeys(document), []string{"action", "applied", "from"}; !slices.Equal(got, want) {
+		t.Errorf("svc self update --json marshals to %v, want %v", got, want)
+	}
+}
+
+func TestSelfUpdateDownloadsAndHandsOverTheSwap(t *testing.T) {
+	const (
+		current = "2.0.0"
+		latest  = "2.1.0"
+	)
+	feed := newReleaseFeed(t, []release{released(t, latest, "- a fix")})
+	home := t.TempDir()
+	about := aboutJSON(t, testAppInfo(current, feed))
+	tmp := redirectTempDir(t)
+	rec := &swapRecorder{}
+
+	t.Run("text reports the hand-over, not a success", func(t *testing.T) {
+		code, s := selfRun(t, home, about, rec.fn(), pipedEnv, "", "--lang", "en", "self", "update", "--yes")
+		if code != ExitOK {
+			t.Fatalf("svc self update = exit %d, want %d; stderr:\n%s", code, ExitOK, s.stderr)
+		}
+		if want := catalogWord(t, "en", "cli.selfUpdateApplied", nil); !strings.Contains(s.stdout.String(), want) {
+			t.Errorf("stdout does not carry the hand-over sentence %q:\n%s", want, s.stdout)
+		}
+		if len(rec.actions) != 1 || rec.actions[0] != SwapUpdate {
+			t.Fatalf("swaps handed over = %v, want exactly one %q", rec.actions, SwapUpdate)
+		}
+		rec.assertNoRelaunch(t)
+
+		// The download really happened and really passed the checksum gate:
+		// DownloadUpdate deletes the payload on a mismatch, so bytes at the
+		// fixed path are the proof.
+		got, err := os.ReadFile(updatePayloadPath(tmp))
+		if err != nil {
+			t.Fatalf("the downloaded payload is not at %s: %v", updatePayloadPath(tmp), err)
+		}
+		if !slices.Equal(got, updateTestPayload) {
+			t.Errorf("the payload on disk is %q, want the bytes the feed served", got)
+		}
+		// Progress is decoration and belongs on stderr, never in the result
+		// stream a caller is piping somewhere.
+		if strings.Contains(s.stdout.String(), "Downloading") {
+			t.Errorf("progress reached stdout:\n%s", s.stdout)
+		}
+	})
+
+	t.Run("--json emits exactly one document", func(t *testing.T) {
+		code, s := selfRun(t, home, about, rec.fn(), pipedEnv, "", "--json", "self", "update", "--yes")
+		if code != ExitOK {
+			t.Fatalf("svc --json self update = exit %d, want %d; stderr:\n%s", code, ExitOK, s.stderr)
+		}
+		var result SelfApplyResult
+		decodeJSON(t, s, &result)
+		if !result.Applied || result.Action != string(SwapUpdate) {
+			t.Errorf("result = %+v, want an applied update", result)
+		}
+		if result.From != current || result.To != latest {
+			t.Errorf("result = %+v, want %s → %s", result, current, latest)
+		}
+		if result.Filename != hostAssetName(t, latest) {
+			t.Errorf("filename = %q, want the asset that was swapped in", result.Filename)
+		}
+		var document map[string]json.RawMessage
+		decodeJSON(t, s, &document)
+		if got, want := topLevelKeys(document), []string{"action", "applied", "filename", "from", "to"}; !slices.Equal(got, want) {
+			t.Errorf("svc self update --json marshals to %v, want %v", got, want)
+		}
+		// The download emitted progress, and every line of it went to stderr:
+		// stdout parsed as one document above, which it could not have if a
+		// single progress line had landed there.
+		if s.stderr.Len() == 0 {
+			t.Error("stderr is empty: the download emitted no progress at all")
+		}
+	})
+}
+
+// TestSelfUpdateAsksTheWindowsOwnQuestion pins the confirmation to the modal's
+// own words: the button that starts the download as the question, and the
+// "current → latest" line from under the modal's title as the explanation. The
+// window asks twice, once to download and once to restart, and a terminal cannot
+// -- the payload lives in a temp file that dies with the run -- so the two
+// collapse into the first.
+func TestSelfUpdateAsksTheWindowsOwnQuestion(t *testing.T) {
+	const (
+		current = "2.0.0"
+		latest  = "2.1.0"
+	)
+	feed := newReleaseFeed(t, []release{released(t, latest, "- a fix")})
+	home := t.TempDir()
+	about := aboutJSON(t, testAppInfo(current, feed))
+	redirectTempDir(t)
+	question := catalogWord(t, "zh", "about.downloadAndInstall", nil)
+	arrow := catalogWord(t, "zh", "about.currentVersion", map[string]string{"version": current}) + " → v" + latest
+
+	t.Run("a decline changes nothing", func(t *testing.T) {
+		rec := &swapRecorder{}
+		code, s := selfRun(t, home, about, rec.fn(), terminalEnv, "n\n", "self", "update")
+		if code != ExitCanceled {
+			t.Fatalf("a declined update = exit %d, want %d; stderr:\n%s", code, ExitCanceled, s.stderr)
+		}
+		if rec.called() {
+			t.Errorf("a declined update handed over a swap: %v", rec.actions)
+		}
+		if s.stdout.Len() != 0 {
+			t.Errorf("stdout = %q, want nothing: a cancelled command has no result", s.stdout)
+		}
+		if !strings.Contains(s.stderr.String(), question) {
+			t.Errorf("stderr does not ask the modal's own question %q:\n%s", question, s.stderr)
+		}
+		if !strings.Contains(s.stderr.String(), arrow) {
+			t.Errorf("stderr does not explain what replaces what (%q):\n%s", arrow, s.stderr)
+		}
+		if _, err := os.Stat(updatePayloadPath(os.TempDir())); err == nil {
+			t.Error("a declined update still downloaded the payload")
+		}
+	})
+
+	t.Run("an accept hands the swap over", func(t *testing.T) {
+		rec := &swapRecorder{}
+		code, _ := selfRun(t, home, about, rec.fn(), terminalEnv, "y\n", "self", "update")
+		if code != ExitOK {
+			t.Fatalf("an accepted update = exit %d, want %d", code, ExitOK)
+		}
+		if len(rec.actions) != 1 || rec.actions[0] != SwapUpdate {
+			t.Errorf("swaps handed over = %v, want exactly one %q", rec.actions, SwapUpdate)
+		}
+		rec.assertNoRelaunch(t)
+	})
+}
+
+// TestSelfUpdateRefusesToGuessWithoutATerminal is the property that makes an
+// unattended binary swap impossible by accident: with no terminal on stdin and
+// no --yes, the command refuses rather than assuming either answer.
+func TestSelfUpdateRefusesToGuessWithoutATerminal(t *testing.T) {
+	feed := newReleaseFeed(t, []release{released(t, "2.1.0", "- a fix")})
+	home := t.TempDir()
+	about := aboutJSON(t, testAppInfo("2.0.0", feed))
+	redirectTempDir(t)
+	rec := &swapRecorder{}
+
+	code, s := selfRun(t, home, about, rec.fn(), pipedEnv, "", "self", "update")
+	if code != ExitUsage {
+		t.Fatalf("svc self update with no terminal and no --yes = exit %d, want %d; stderr:\n%s", code, ExitUsage, s.stderr)
+	}
+	if rec.called() {
+		t.Errorf("the command handed over a swap it had no permission for: %v", rec.actions)
+	}
+	if s.stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing", s.stdout)
+	}
+	if !strings.Contains(s.stderr.String(), "--yes") {
+		t.Errorf("stderr does not tell the caller how to answer in advance:\n%s", s.stderr)
+	}
+}
+
+// TestSelfUpdateStopsAtAChecksumMismatch is the integrity gate: a payload whose
+// bytes do not match the digest the release published must never reach the swap,
+// because the swap is the step that puts those bytes in place of a working
+// binary.
+func TestSelfUpdateStopsAtAChecksumMismatch(t *testing.T) {
+	const latest = "2.1.0"
+	feed := newReleaseFeedPublishing(t, []release{released(t, latest, "- a fix")},
+		"0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0")
+	home := t.TempDir()
+	about := aboutJSON(t, testAppInfo("2.0.0", feed))
+	redirectTempDir(t)
+	rec := &swapRecorder{}
+
+	code, s := selfRun(t, home, about, rec.fn(), pipedEnv, "", "self", "update", "--yes")
+	if code != ExitIntegrity {
+		t.Fatalf("svc self update against a lying manifest = exit %d, want %d; stderr:\n%s", code, ExitIntegrity, s.stderr)
+	}
+	if rec.called() {
+		t.Errorf("a payload that failed its checksum was handed to the swap: %v", rec.actions)
+	}
+	if want := catalogWord(t, "zh", "errors.checksum-mismatch", map[string]string{
+		"expected": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+		"got":      updateTestDigest,
+	}); !strings.Contains(s.stderr.String(), want) {
+		t.Errorf("stderr = %q, want %q", s.stderr, want)
+	}
+	if s.stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing: the update did not happen", s.stdout)
+	}
+}
+
+// TestSelfUpdateReportsASwapFailure covers the hand-over itself failing: the
+// payload is down and verified, the script could not be started, and the command
+// must say so rather than report a swap that is not running.
+func TestSelfUpdateReportsASwapFailure(t *testing.T) {
+	feed := newReleaseFeed(t, []release{released(t, "2.1.0", "- a fix")})
+	home := t.TempDir()
+	about := aboutJSON(t, testAppInfo("2.0.0", feed))
+	redirectTempDir(t)
+	rec := &swapRecorder{err: errors.New("failed to launch update script")}
+
+	code, s := selfRun(t, home, about, rec.fn(), pipedEnv, "", "self", "update", "--yes")
+	if code != ExitError {
+		t.Fatalf("a failed hand-over = exit %d, want %d", code, ExitError)
+	}
+	if !strings.Contains(s.stderr.String(), "failed to launch update script") {
+		t.Errorf("stderr does not carry the failure:\n%s", s.stderr)
+	}
+	if want := catalogWord(t, "zh", "cli.selfUpdateApplied", nil); strings.Contains(s.stdout.String(), want) {
+		t.Errorf("stdout claims a hand-over that failed:\n%s", s.stdout)
+	}
+	if s.stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing", s.stdout)
+	}
+}
+
+// TestSelfUpdateWaitsBehindAnotherOperation pins the lock: a download and a
+// binary swap are exactly the operations that must not overlap with an install
+// running in the window next door.
+func TestSelfUpdateWaitsBehindAnotherOperation(t *testing.T) {
+	feed := newReleaseFeed(t, []release{released(t, "2.1.0", "- a fix")})
+	home := t.TempDir()
+	about := aboutJSON(t, testAppInfo("2.0.0", feed))
+	redirectTempDir(t)
+
+	// The lock lives in <home>/.svc, which is the directory the run resolves;
+	// holding it from here is the same file the command would take.
+	dir := filepath.Join(home, ".svc")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	held, err := svclock.Acquire(dir, nil)
+	if err != nil {
+		t.Fatalf("take the operation lock: %v", err)
+	}
+	defer held.Release()
+
+	rec := &swapRecorder{}
+	code, s := selfRun(t, home, about, rec.fn(), pipedEnv, "", "self", "update", "--yes", "--no-wait")
+	if code != ExitBusy {
+		t.Fatalf("svc self update --no-wait against a held lock = exit %d, want %d; stderr:\n%s", code, ExitBusy, s.stderr)
+	}
+	if rec.called() {
+		t.Errorf("the swap ran while another svc operation held the lock: %v", rec.actions)
+	}
+}
+
+func TestSelfRollbackHandsOverTheSwap(t *testing.T) {
+	const current = "2.1.0"
+	home := t.TempDir()
+	// No about.json injection is needed for the version: rollback never talks
+	// to the release feed, so the parsed fallback is all it reports.
+	rec := &swapRecorder{}
+
+	t.Run("text reports the hand-over", func(t *testing.T) {
+		code, s := selfRun(t, home, nil, rec.fn(), pipedEnv, "", "--lang", "en", "self", "rollback", "--yes")
+		if code != ExitOK {
+			t.Fatalf("svc self rollback = exit %d, want %d; stderr:\n%s", code, ExitOK, s.stderr)
+		}
+		if want := catalogWord(t, "en", "cli.selfRollbackApplied", nil); !strings.Contains(s.stdout.String(), want) {
+			t.Errorf("stdout does not carry the hand-over sentence %q:\n%s", want, s.stdout)
+		}
+		if len(rec.actions) != 1 || rec.actions[0] != SwapRollback {
+			t.Fatalf("swaps handed over = %v, want exactly one %q", rec.actions, SwapRollback)
+		}
+		rec.assertNoRelaunch(t)
+	})
+
+	t.Run("--json names no target version", func(t *testing.T) {
+		code, s := selfRun(t, home, nil, rec.fn(), pipedEnv, "", "--json", "self", "rollback", "--yes")
+		if code != ExitOK {
+			t.Fatalf("svc --json self rollback = exit %d, want %d", code, ExitOK)
+		}
+		var result SelfApplyResult
+		decodeJSON(t, s, &result)
+		if !result.Applied || result.Action != string(SwapRollback) {
+			t.Errorf("result = %+v, want an applied rollback", result)
+		}
+		// To stays out: what comes back is whatever the .bak holds, and reading
+		// that would mean running the binary being restored.
+		var document map[string]json.RawMessage
+		decodeJSON(t, s, &document)
+		if got, want := topLevelKeys(document), []string{"action", "applied", "from"}; !slices.Equal(got, want) {
+			t.Errorf("svc self rollback --json marshals to %v, want %v", got, want)
+		}
+	})
+}
+
+// TestSelfRollbackAsksItsOwnQuestion pins the one place the CLI deliberately
+// does not borrow the window's wording: settings.rollbackConfirmDesc ends by
+// promising the app will restart, and a terminal swap must not. The question
+// above it stays shared.
+func TestSelfRollbackAsksItsOwnQuestion(t *testing.T) {
+	home := t.TempDir()
+	rec := &swapRecorder{}
+
+	code, s := selfRun(t, home, nil, rec.fn(), terminalEnv, "n\n", "self", "rollback")
+	if code != ExitCanceled {
+		t.Fatalf("a declined rollback = exit %d, want %d; stderr:\n%s", code, ExitCanceled, s.stderr)
+	}
+	if rec.called() {
+		t.Errorf("a declined rollback handed over a swap: %v", rec.actions)
+	}
+	stderr := s.stderr.String()
+	if want := catalogWord(t, "zh", "settings.rollbackConfirm", nil); !strings.Contains(stderr, want) {
+		t.Errorf("stderr does not ask the window's own question %q:\n%s", want, s.stderr)
+	}
+	if want := catalogWord(t, "zh", "cli.selfRollbackDesc", nil); !strings.Contains(stderr, want) {
+		t.Errorf("stderr does not explain the rollback in the CLI's own words %q:\n%s", want, s.stderr)
+	}
+	// The borrowed sentence promises a restart. Printing it would confirm an
+	// outcome the command then declines to produce.
+	if borrowed := catalogWord(t, "zh", "settings.rollbackConfirmDesc", nil); strings.Contains(stderr, borrowed) {
+		t.Errorf("stderr promises the window's restart:\n%s", s.stderr)
+	}
+	if s.stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing: a cancelled command has no result", s.stdout)
+	}
+}
+
+func TestSelfRollbackRefusesToGuessWithoutATerminal(t *testing.T) {
+	home := t.TempDir()
+	rec := &swapRecorder{}
+
+	code, s := selfRun(t, home, nil, rec.fn(), pipedEnv, "", "self", "rollback")
+	if code != ExitUsage {
+		t.Fatalf("svc self rollback with no terminal and no --yes = exit %d, want %d; stderr:\n%s", code, ExitUsage, s.stderr)
+	}
+	if rec.called() {
+		t.Errorf("the command handed over a rollback it had no permission for: %v", rec.actions)
+	}
+	if s.stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing", s.stdout)
+	}
+}
+
+// TestSelfRollbackWithoutABackupExits3 drives the REAL RollbackUpdate -- no
+// injected swap -- because the failure happens before anything is launched: the
+// service stats the backup, finds none, and returns apperr.NoBackup. That is the
+// whole reason the CLI does not pre-check with HasBackup: the service's error
+// names the exact path it looked at, which a bool cannot.
+func TestSelfRollbackWithoutABackupExits3(t *testing.T) {
+	if (&update.Updater{}).HasBackup() {
+		t.Skip("a .bak sits next to the test binary, so the real rollback would launch a swap script")
+	}
+	home := t.TempDir()
+
+	code, s := selfRun(t, home, nil, nil, pipedEnv, "", "self", "rollback", "--yes")
+	if code != ExitNotFound {
+		t.Fatalf("svc self rollback with no backup = exit %d, want %d; stderr:\n%s", code, ExitNotFound, s.stderr)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := catalogWord(t, "zh", "errors.no-backup", map[string]string{"path": exe + ".bak"}); !strings.Contains(s.stderr.String(), want) {
+		t.Errorf("stderr = %q, want %q", s.stderr, want)
+	}
+	if s.stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing: there was no rollback to report", s.stdout)
+	}
+}
+
+// --- the dispatch underneath --------------------------------------------------
+
+// TestPerformSwapRejectsAnUnknownAction covers the default branch. Guessing here
+// would mean replacing a binary, so an action the table does not name is an
+// error rather than a fallback.
+func TestPerformSwapRejectsAnUnknownAction(t *testing.T) {
+	err := performSwap(nil, SwapAction("downgrade"), update.ApplyOptions{})
+	if err == nil {
+		t.Fatal("performSwap with an unknown action = nil, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "downgrade") {
+		t.Errorf("the refusal does not name the action: %v", err)
+	}
+}
+
+// TestSwapBinaryNeverAsksForARelaunch pins the one decision the whole design
+// turns on, at the seam where the command layer meets the service: whatever the
+// action, the CLI hands it over with Relaunch off.
+func TestSwapBinaryNeverAsksForARelaunch(t *testing.T) {
+	s := newStreams()
+	r := newRunner(t, s, globalFlags{}, tempHome(t, nil))
+	rec := &swapRecorder{}
+	r.swap = rec.fn()
+
+	for _, action := range []SwapAction{SwapUpdate, SwapRollback} {
+		// A nil Updater is safe: the recorder never touches it, and that is the
+		// point -- the assertion is about the options the command layer builds.
+		if err := r.swapBinary(nil, action); err != nil {
+			t.Fatalf("swapBinary(%q): %v", action, err)
+		}
+	}
+	if got, want := rec.actions, []SwapAction{SwapUpdate, SwapRollback}; !slices.Equal(got, want) {
+		t.Errorf("actions = %v, want %v", got, want)
+	}
+	rec.assertNoRelaunch(t)
+}
+
+// TestBootstrapRoutesUpdateEventsToStderr pins the wiring end to end, the same
+// way the scan test does: an update:progress event emitted through the runtime
+// bootstrap built has to reach the progress renderer, on stderr, and never the
+// result stream. Without it a self-update would download 40 MB in silence and
+// then exit.
+func TestBootstrapRoutesUpdateEventsToStderr(t *testing.T) {
+	s := newStreams()
+	r := newRunner(t, s, globalFlags{}, tempHome(t, nil))
+	if _, err := r.bootstrap(appcore.LevelRead); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	defer r.shutdown()
+	if r.runtime == nil {
+		t.Fatal("bootstrap did not build a runtime")
+	}
+
+	r.runtime.EventsEmit(EventUpdateProgress, update.UpdateProgress{
+		Stage:   StageDownloading,
+		Percent: 42,
+		Message: "Downloading 12.0MB / 43.6MB",
+	})
+	if s.stdout.Len() != 0 {
+		t.Errorf("the result stream got %q, want nothing while an update downloads", s.stdout)
+	}
+	if s.stderr.Len() == 0 {
+		t.Fatal("stderr is empty: the runtime bootstrap wired dropped the update event")
+	}
+	if strings.Contains(s.stderr.String(), "progress.") {
+		t.Errorf("stderr leaked a catalog key: %q", s.stderr)
+	}
+}
+
+// TestApplyOptionsIsTheOnlyDifferenceBetweenTheShells is the source-level half of
+// the red line: app.go must keep asking for a relaunch, because the window Quit
+// closed has to come back.
+func TestApplyOptionsIsTheOnlyDifferenceBetweenTheShells(t *testing.T) {
+	source := string(repoFile(t, "app.go"))
+	for _, call := range []string{
+		"a.updater.ApplyUpdate(update.ApplyOptions{Relaunch: true})",
+		"a.updater.RollbackUpdate(update.ApplyOptions{Relaunch: true})",
+	} {
+		if !strings.Contains(source, call) {
+			t.Errorf("app.go no longer calls %s; the window would close and never come back after a swap", call)
+		}
+	}
+	// And the two error codes the CLI promises in its help stay mapped.
+	if got := ExitCodeForError(apperr.New(apperr.NoBackup, map[string]string{"path": "/x/svc.bak"})); got != ExitNotFound {
+		t.Errorf("a missing backup exits %d, want %d", got, ExitNotFound)
+	}
+	if got := ExitCodeForError(apperr.New(apperr.ChecksumMismatch, nil)); got != ExitIntegrity {
+		t.Errorf("a checksum mismatch exits %d, want %d", got, ExitIntegrity)
+	}
 }

@@ -99,7 +99,7 @@ func TestBuildUnixUpdateScript(t *testing.T) {
 	const currentExe = "/opt/svc/svc"
 	const bak = "/opt/svc/svc.bak"
 	const newExe = "/tmp/svc_update_payload_123456"
-	script := buildUnixUpdateScript(pid, currentExe, bak, newExe, hash)
+	script := buildUnixUpdateScript(pid, currentExe, bak, newExe, hash, true)
 
 	checks := []struct {
 		name string
@@ -132,7 +132,7 @@ func TestBuildUnixUpdateScript(t *testing.T) {
 // injected via the install path.
 func TestBuildUnixUpdateScript_QuotesHostilePaths(t *testing.T) {
 	exe := `/opt/svc dir/with"space$/svc`
-	script := buildUnixUpdateScript(1, exe, exe+".bak", "/tmp/payload", "abc")
+	script := buildUnixUpdateScript(1, exe, exe+".bak", "/tmp/payload", "abc", true)
 	want := shellQuote(exe)
 	if !strings.Contains(script, want) {
 		t.Errorf("buildUnixUpdateScript does not shell-quote hostile path; want substring %q\n--- script ---\n%s", want, script)
@@ -145,7 +145,7 @@ func TestBuildUnixRollbackScript(t *testing.T) {
 	const pid = 4242
 	const currentExe = "/opt/svc/svc"
 	const bak = "/opt/svc/svc.bak"
-	script := buildUnixRollbackScript(pid, bak, currentExe)
+	script := buildUnixRollbackScript(pid, bak, currentExe, true)
 
 	checks := []struct {
 		name string
@@ -405,7 +405,7 @@ func TestBundleVersionSync_RejectsHostileVersionOutput(t *testing.T) {
 // before the relaunch, so LaunchServices sees the new version at launch.
 func TestBuildUnixUpdateScript_SyncsBundleVersion(t *testing.T) {
 	exe := "/Applications/svc.app/Contents/MacOS/svc"
-	script := buildUnixUpdateScript(1, exe, exe+".bak", "/tmp/payload", "abc")
+	script := buildUnixUpdateScript(1, exe, exe+".bak", "/tmp/payload", "abc", true)
 
 	verify := strings.Index(script, "Verifying integrity")
 	stamp := strings.Index(script, "Info.plist")
@@ -424,7 +424,7 @@ func TestBuildUnixUpdateScript_SyncsBundleVersion(t *testing.T) {
 // binary, so the bundle must go back to the version that binary reports too.
 func TestBuildUnixRollbackScript_SyncsBundleVersion(t *testing.T) {
 	exe := "/Applications/svc.app/Contents/MacOS/svc"
-	script := buildUnixRollbackScript(1, exe+".bak", exe)
+	script := buildUnixRollbackScript(1, exe+".bak", exe, true)
 
 	restore := strings.Index(script, "Restoring previous version")
 	stamp := strings.Index(script, "Info.plist")
@@ -437,4 +437,104 @@ func TestBuildUnixRollbackScript_SyncsBundleVersion(t *testing.T) {
 		t.Errorf("Info.plist sync must sit between the restore and the relaunch (restore=%d plist=%d relaunch=%d)\n--- script ---\n%s",
 			restore, stamp, relaunch, script)
 	}
+}
+
+// trivialCommand is a child that starts and exits 0 on this platform, for the
+// tests that really launch one.
+func trivialCommand() (string, []string) {
+	return "/bin/sh", []string{"-c", "exit 0"}
+}
+
+// shSyntaxCheck runs the parser /bin/sh itself uses over a rendered script.
+// The builders concatenate a conditional launch block into a heredoc-shaped
+// template, so a mistake in that block is a syntax error at swap time -- the
+// worst possible moment to discover one, because the running binary has
+// already been renamed to .bak.
+func shSyntaxCheck(t *testing.T, script string) {
+	t.Helper()
+	out, err := exec.Command("/bin/sh", "-n", "-c", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("/bin/sh -n rejected the rendered script: %v\n--- output ---\n%s\n--- script ---\n%s", err, out, script)
+	}
+}
+
+// TestBuildRelaunchBlock pins the two shapes of the script tail. The
+// relaunching one is the line the GUI has always run, byte for byte; the other
+// is nothing at all, which is what keeps `svc self update` from opening a
+// window when the swap finishes.
+func TestBuildRelaunchBlock(t *testing.T) {
+	got := buildRelaunchBlock(true, "Starting new version...", shellQuote("/opt/svc/svc"))
+	want := "echo \"Starting new version...\"\nnohup '/opt/svc/svc' > /dev/null 2>&1 &\n"
+	if got != want {
+		t.Errorf("buildRelaunchBlock(true) = %q, want %q", got, want)
+	}
+	if off := buildRelaunchBlock(false, "Starting new version...", shellQuote("/opt/svc/svc")); off != "" {
+		t.Errorf("buildRelaunchBlock(false) = %q, want nothing at all", off)
+	}
+}
+
+// TestBuildUnixUpdateScript_NoRelaunch covers the CLI's half of ApplyOptions:
+// the same script over the same bytes, minus the launch. Everything that makes
+// the swap safe -- the PID wait, the backup, the checksum verify, the bundle
+// stamp, the self-delete -- has to survive, because a CLI update that skipped
+// any of them would be a different and worse update than the GUI's.
+func TestBuildUnixUpdateScript_NoRelaunch(t *testing.T) {
+	const exe = "/opt/svc/svc"
+	script := buildUnixUpdateScript(4242, exe, exe+".bak", "/tmp/payload", "abc", false)
+
+	for _, absent := range []string{
+		"nohup",
+		"Starting new version",
+	} {
+		if strings.Contains(script, absent) {
+			t.Errorf("the no-relaunch update script still carries %q\n--- script ---\n%s", absent, script)
+		}
+	}
+	for _, present := range []string{
+		"while kill -0 4242 2>/dev/null; do",
+		"mv -f '/opt/svc/svc' '/opt/svc/svc.bak'",
+		"mv -f '/tmp/payload' '/opt/svc/svc'",
+		`if [ "$actual_hash" != "$expected_hash" ]; then`,
+		"Info.plist",
+		`rm -f "$0"`,
+	} {
+		if !strings.Contains(script, present) {
+			t.Errorf("the no-relaunch update script lost %q\n--- script ---\n%s", present, script)
+		}
+	}
+	shSyntaxCheck(t, script)
+}
+
+// TestBuildUnixRollbackScript_NoRelaunch is the same assertion for the restore
+// path, which the CLI reaches through `svc self rollback`.
+func TestBuildUnixRollbackScript_NoRelaunch(t *testing.T) {
+	const exe = "/opt/svc/svc"
+	script := buildUnixRollbackScript(4242, exe+".bak", exe, false)
+
+	for _, absent := range []string{"nohup", "Starting restored version"} {
+		if strings.Contains(script, absent) {
+			t.Errorf("the no-relaunch rollback script still carries %q\n--- script ---\n%s", absent, script)
+		}
+	}
+	for _, present := range []string{
+		"while kill -0 4242 2>/dev/null; do",
+		"mv -f '/opt/svc/svc.bak' '/opt/svc/svc'",
+		"Info.plist",
+		`rm -f "$0"`,
+	} {
+		if !strings.Contains(script, present) {
+			t.Errorf("the no-relaunch rollback script lost %q\n--- script ---\n%s", present, script)
+		}
+	}
+	shSyntaxCheck(t, script)
+}
+
+// TestBuildUnixScripts_RelaunchStillParses keeps the syntax check honest for
+// the GUI's shape too: the conditional block is the only difference between
+// the two, and a template that broke with the launch present would break the
+// window's updater rather than the terminal's.
+func TestBuildUnixScripts_RelaunchStillParses(t *testing.T) {
+	const exe = "/opt/svc/svc"
+	shSyntaxCheck(t, buildUnixUpdateScript(4242, exe, exe+".bak", "/tmp/payload", "abc", true))
+	shSyntaxCheck(t, buildUnixRollbackScript(4242, exe+".bak", exe, true))
 }

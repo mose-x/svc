@@ -10,6 +10,7 @@ import (
 
 	"svc/internal/cli/i18n"
 	"svc/internal/sdk"
+	"svc/internal/update"
 )
 
 // BarWidth is the progress bar width in cells. Sixteen cells is wide enough to
@@ -113,6 +114,47 @@ func ProgressText(catalog *i18n.Catalog, p sdk.InstallProgress) string {
 		return catalog.T("progress.done", nil)
 	case StageError:
 		return catalog.T("progress.error", map[string]string{"error": p.Message})
+	default:
+		return p.Message
+	}
+}
+
+// UpdateProgressText renders the stage line of a self-update event. It is the
+// ternary in the update modal of
+// frontend/src/components/Settings/SettingsPage.tsx, including that ternary's
+// default branch, with one addition a terminal needs and a window does not.
+//
+// The modal's `downloading` branch says only "Downloading..." because the number
+// is already on screen beside it: antd's Progress renders the percentage next to
+// the bar. A pipe has no bar, so eleven decimated lines would all read exactly
+// alike and a CI log would show a download making progress without ever showing
+// how far it had got. The downloading line therefore carries the percentage,
+// through the same progress.downloadingPercent key the install line uses for the
+// same reason -- one renderer with three modes, and a stage that read two
+// different ways depending on which service emitted it would be a wart. With no
+// total to count against there is no honest number to print and the modal's own
+// sentence is used instead.
+//
+// The rest of the keys are not the install ones, even where the words happen to
+// match. The modal says "Download complete" for `done` where the install panel
+// says "Installation complete!", because at that point nothing has been
+// installed yet -- the swap has not even been handed over.
+func UpdateProgressText(catalog *i18n.Catalog, p update.UpdateProgress) string {
+	if catalog == nil {
+		return p.Message
+	}
+	switch p.Stage {
+	case StageDone:
+		return catalog.T("progress.updateDone", nil)
+	case StageDownloading:
+		if p.TotalBytes > 0 {
+			return catalog.T("progress.downloadingPercent", map[string]string{
+				"percent": strconv.Itoa(p.Percent),
+			})
+		}
+		return catalog.T("progress.updateDownloading", nil)
+	case StageVerifying:
+		return catalog.T("progress.verifying", nil)
 	default:
 		return p.Message
 	}
@@ -227,6 +269,71 @@ func (l ProgressLine) plainWidth() int {
 	return width
 }
 
+// frame is one progress event reduced to what the three renderers draw.
+//
+// Install and update events are different structs emitted by different
+// services, and the same stage token maps to a different sentence in each, so
+// each entry point builds its own frame and everything downstream -- the tty
+// redraw, the plain-mode decimation, the JSON line -- is shared instead of
+// being written twice and left to drift.
+type frame struct {
+	// payload is the event exactly as the service emitted it, marshalled
+	// verbatim in JSON mode.
+	payload any
+	// stage is the event's stage token. It picks the tone and drives the
+	// plain-mode decimation.
+	stage string
+	// text is the rendered stage line.
+	text string
+	// bytes is the byte counter, empty for an event that has none to show.
+	bytes string
+	// message is the backend's own message. The plain renderer compares it to
+	// decide whether a repeated error stage says something new.
+	message string
+	// percent fills the bar and decimates the plain output.
+	percent int
+	// bar reports whether this event draws a bar at all. A transfer of unknown
+	// length cannot have one, and neither can a stage that is not transferring.
+	bar bool
+}
+
+// installFrame reduces an install event. It carries the two recomputations
+// DetailPanel.tsx makes: the percentage comes from the byte counters rather
+// than from the Percent field, and a bar exists only while something of a known
+// size is downloading.
+func installFrame(catalog *i18n.Catalog, p sdk.InstallProgress) frame {
+	return frame{
+		payload: p,
+		stage:   p.Stage,
+		text:    ProgressText(catalog, p),
+		bytes:   BytesText(p),
+		message: p.Message,
+		percent: DownloadPercent(p.DownloadedBytes, p.TotalBytes),
+		bar:     p.Stage == StageDownloading && p.TotalBytes > 0,
+	}
+}
+
+// updateFrame reduces a self-update event. It differs from installFrame in the
+// three places the GUI's update modal differs from its install panel:
+//
+//   - the percentage is the event's own rather than being recomputed from the
+//     byte counters, because the modal feeds downloadProgress.percent straight
+//     to its Progress bar and to the number beside it;
+//   - there are no byte counters, which the modal does not show either;
+//   - the verifying stage keeps its bar, since the modal holds the bar up until
+//     the `done` event arrives, and `done` has none because that event swaps
+//     the modal for the "update ready" one instead.
+func updateFrame(catalog *i18n.Catalog, p update.UpdateProgress) frame {
+	return frame{
+		payload: p,
+		stage:   p.Stage,
+		text:    UpdateProgressText(catalog, p),
+		message: p.Message,
+		percent: p.Percent,
+		bar:     p.Stage == StageDownloading || p.Stage == StageVerifying,
+	}
+}
+
 // ProgressRenderer turns progress events into output.
 //
 // Progress never goes to stdout. stdout is the result channel -- `svc list |
@@ -272,19 +379,36 @@ func NewProgressRenderer(opts Options, catalog *i18n.Catalog, out io.Writer) *Pr
 	}
 }
 
-// Render reports one progress event. It is safe to call on a nil renderer, so
-// a command that has not built one yet cannot crash a service callback.
+// Render reports one install progress event. It is safe to call on a nil
+// renderer, so a command that has not built one yet cannot crash a service
+// callback.
 func (r *ProgressRenderer) Render(p sdk.InstallProgress) {
 	if r == nil || r.quiet {
 		return
 	}
+	r.render(installFrame(r.catalog, p))
+}
+
+// RenderUpdate reports one self-update progress event. It is Render for the
+// `update:progress` stream: the same three modes, the same redraw and
+// decimation rules, and the same rule that progress never reaches stdout. It is
+// safe to call on a nil renderer for the same reason.
+func (r *ProgressRenderer) RenderUpdate(p update.UpdateProgress) {
+	if r == nil || r.quiet {
+		return
+	}
+	r.render(updateFrame(r.catalog, p))
+}
+
+// render writes one frame in the resolved mode.
+func (r *ProgressRenderer) render(f frame) {
 	switch r.mode {
 	case ModeJSON:
-		r.renderJSON(p)
+		r.renderJSON(f.payload)
 	case ModeTTY:
-		r.renderTTY(p)
+		r.renderTTY(f)
 	default:
-		r.renderPlain(p)
+		r.renderPlain(f)
 	}
 }
 
@@ -303,13 +427,14 @@ func (r *ProgressRenderer) Close() {
 
 // renderJSON writes one line per event, verbatim.
 //
-// The payload is sdk.InstallProgress marshalled as-is rather than a CLI-shaped
+// The payload is the service struct marshalled as-is rather than a CLI-shaped
 // envelope: it is exactly the object the GUI receives over the Wails event bus,
 // so a consumer that understands one understands the other. Progress lines live
 // on stderr and results on stdout, so the two streams are already separable
-// without a discriminator field.
-func (r *ProgressRenderer) renderJSON(p sdk.InstallProgress) {
-	encoded, err := json.Marshal(p)
+// without a discriminator field -- which is also what lets the install and the
+// self-update streams share this writer while staying distinguishable.
+func (r *ProgressRenderer) renderJSON(payload any) {
+	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
@@ -320,8 +445,8 @@ func (r *ProgressRenderer) renderJSON(p sdk.InstallProgress) {
 // dropped, which is most of them: the backend emits a progress event per read
 // chunk, and a 40 MB archive produces hundreds of events that differ only in
 // the byte counter's last digit.
-func (r *ProgressRenderer) renderTTY(p sdk.InstallProgress) {
-	line := r.line(p, BarWidth)
+func (r *ProgressRenderer) renderTTY(f frame) {
+	line := r.line(f, BarWidth)
 	text := line.String()
 	if r.dirty && text == r.lastText {
 		return
@@ -346,39 +471,39 @@ func (r *ProgressRenderer) renderTTY(p sdk.InstallProgress) {
 // during a download one line per ten percent. A second error stage with a
 // different message is also written, because dropping one would hide the reason
 // a retry failed differently from the first attempt.
-func (r *ProgressRenderer) renderPlain(p sdk.InstallProgress) {
-	decile := DownloadPercent(p.DownloadedBytes, p.TotalBytes) / 10
+func (r *ProgressRenderer) renderPlain(f frame) {
+	decile := f.percent / 10
 	write := false
 	switch {
-	case !r.plainSeen || p.Stage != r.plainStage:
+	case !r.plainSeen || f.stage != r.plainStage:
 		write = true
-	case p.Stage == StageDownloading && decile != r.plainDecile:
+	case f.stage == StageDownloading && decile != r.plainDecile:
 		write = true
-	case p.Stage == StageError && p.Message != r.plainMessage:
+	case f.stage == StageError && f.message != r.plainMessage:
 		write = true
 	}
 	if !write {
 		return
 	}
 	r.plainSeen = true
-	r.plainStage = p.Stage
+	r.plainStage = f.stage
 	r.plainDecile = decile
-	r.plainMessage = p.Message
-	_, _ = io.WriteString(r.out, r.line(p, 0).String()+"\n")
+	r.plainMessage = f.message
+	_, _ = io.WriteString(r.out, r.line(f, 0).String()+"\n")
 }
 
-// line assembles the ProgressLine for an event. A bar is only drawn when the
-// caller asks for one and the transfer has a known total, since a bar of an
-// unknown-length download is a lie.
-func (r *ProgressRenderer) line(p sdk.InstallProgress, barWidth int) ProgressLine {
+// line assembles the ProgressLine for a frame. A bar is only drawn when the
+// caller asks for one and the frame says the event can have one, since a bar of
+// an unknown-length download is a lie.
+func (r *ProgressRenderer) line(f frame, barWidth int) ProgressLine {
 	line := ProgressLine{
-		Text:  ProgressText(r.catalog, p),
-		Bytes: BytesText(p),
+		Text:  f.text,
+		Bytes: f.bytes,
 		Color: r.color,
-		Tone:  ToneForStage(p.Stage),
+		Tone:  ToneForStage(f.stage),
 	}
-	if barWidth > 0 && p.Stage == StageDownloading && p.TotalBytes > 0 {
-		line.Bar = ProgressBar(DownloadPercent(p.DownloadedBytes, p.TotalBytes), barWidth)
+	if barWidth > 0 && f.bar {
+		line.Bar = ProgressBar(f.percent, barWidth)
 	}
 	return line
 }

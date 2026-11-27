@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"svc/internal/cli/i18n"
 	"svc/internal/sdk"
+	"svc/internal/update"
 )
 
 // progressZh and progressEn mirror the shipped catalogs' progress block. The
@@ -26,7 +28,9 @@ const (
 	    "verifying": "验证完整性中...",
 	    "configuring_path": "正在配置环境变量...",
 	    "done": "安装配置完成！",
-	    "error": "下载失败: {{error}}"
+	    "error": "下载失败: {{error}}",
+	    "updateDownloading": "下载中...",
+	    "updateDone": "下载完成"
 	  }
 	}`
 	progressEn = `{
@@ -37,7 +41,9 @@ const (
 	    "verifying": "Verifying integrity...",
 	    "configuring_path": "Configuring environment...",
 	    "done": "Installation complete!",
-	    "error": "Download failed: {{error}}"
+	    "error": "Download failed: {{error}}",
+	    "updateDownloading": "Downloading...",
+	    "updateDone": "Download complete"
 	  }
 	}`
 )
@@ -606,4 +612,293 @@ func downloadPercentInLine(t *testing.T, line string) int {
 		t.Fatalf("%q does not carry a numeric percentage: %v", line, err)
 	}
 	return percent
+}
+
+// --- the self-update stream --------------------------------------------------
+//
+// update:progress carries a different struct than install:progress and the same
+// stage tokens map to different sentences, so it has its own entry point into
+// the renderer. What it shares is everything after that: the three modes, the
+// tty redraw and dedup, the plain-mode decimation, and the rule that progress
+// never reaches stdout.
+
+// updateEvent builds one update:progress payload. The byte counters are set to
+// values a renderer could show, so a test that asserts they are NOT shown is
+// asserting a decision rather than an absence of data.
+func updateEvent(stage string, percent int) update.UpdateProgress {
+	return update.UpdateProgress{
+		Stage:            stage,
+		Percent:          percent,
+		DownloadedBytes:  19_200_000,
+		TotalBytes:       45_700_000,
+		SpeedBytesPerSec: 2_200_000,
+		Message:          "backend detail",
+	}
+}
+
+func TestUpdateProgressText(t *testing.T) {
+	cases := []struct {
+		stage  string
+		wantZh string
+		wantEn string
+	}{
+		// The window's ternary, branch for branch. `done` is the one that
+		// differs in words and not merely in key: the install panel says
+		// "Installation complete!" where the update modal says "Download
+		// complete", because the swap has not happened yet at that point.
+		{StageDone, "下载完成", "Download complete"},
+		// The downloading cases here carry no total, which is the one shape in
+		// which the window's own sentence is used verbatim: with nothing to
+		// count against there is no honest percentage to print.
+		{StageDownloading, "下载中...", "Downloading..."},
+		{StageVerifying, "验证完整性中...", "Verifying integrity..."},
+	}
+	for _, c := range cases {
+		progress := update.UpdateProgress{Stage: c.stage, Message: "backend detail"}
+		if got := UpdateProgressText(progressCatalog(t, "zh"), progress); got != c.wantZh {
+			t.Errorf("zh: stage %q = %q, want %q", c.stage, got, c.wantZh)
+		}
+		if got := UpdateProgressText(progressCatalog(t, "en"), progress); got != c.wantEn {
+			t.Errorf("en: stage %q = %q, want %q", c.stage, got, c.wantEn)
+		}
+	}
+}
+
+// TestUpdateProgressTextCarriesThePercentage is the one place the CLI says more
+// than the window's ternary does, and it says more because the window says it
+// somewhere else: antd renders the percentage beside the Progress bar, and a
+// pipe has no bar. Without the number, plain mode writes eleven identical
+// "Downloading..." lines and a CI log shows a download progressing without ever
+// showing how far it got.
+func TestUpdateProgressTextCarriesThePercentage(t *testing.T) {
+	cases := []struct {
+		percent    int
+		totalBytes int64
+		wantZh     string
+		wantEn     string
+	}{
+		{42, 100, "下载中... 42%", "Downloading... 42%"},
+		{0, 100, "下载中... 0%", "Downloading... 0%"},
+		{100, 100, "下载中... 100%", "Downloading... 100%"},
+		// No total: the modal's own sentence, because 0% of an unknown size
+		// would be a claim rather than a measurement.
+		{0, 0, "下载中...", "Downloading..."},
+	}
+	for _, c := range cases {
+		progress := update.UpdateProgress{
+			Stage:      StageDownloading,
+			Percent:    c.percent,
+			TotalBytes: c.totalBytes,
+			Message:    "backend detail",
+		}
+		if got := UpdateProgressText(progressCatalog(t, "zh"), progress); got != c.wantZh {
+			t.Errorf("zh: percent %d of %d = %q, want %q", c.percent, c.totalBytes, got, c.wantZh)
+		}
+		if got := UpdateProgressText(progressCatalog(t, "en"), progress); got != c.wantEn {
+			t.Errorf("en: percent %d of %d = %q, want %q", c.percent, c.totalBytes, got, c.wantEn)
+		}
+	}
+	// The percentage is the event's own, not one recomputed from the byte
+	// counters: the window feeds downloadProgress.percent straight to its bar,
+	// and the number beside it has to agree with the bar.
+	progress := update.UpdateProgress{
+		Stage:           StageDownloading,
+		Percent:         42,
+		DownloadedBytes: 1,
+		TotalBytes:      1000,
+	}
+	if got := UpdateProgressText(progressCatalog(t, "en"), progress); got != "Downloading... 42%" {
+		t.Errorf("UpdateProgressText recomputed the percentage from the byte counters: %q", got)
+	}
+}
+
+// TestUpdateProgressTextUnknownStage pins the ternary's else branch: a stage the
+// modal does not name shows the backend's own message rather than a key, so a
+// stage added server-side degrades into readable text.
+func TestUpdateProgressTextUnknownStage(t *testing.T) {
+	progress := update.UpdateProgress{Stage: "unpacking", Message: "waiting for the antivirus"}
+	if got := UpdateProgressText(progressCatalog(t, "zh"), progress); got != "waiting for the antivirus" {
+		t.Errorf("UpdateProgressText for an unlisted stage = %q, want the backend message", got)
+	}
+}
+
+// TestUpdateProgressTextWithoutACatalog: a renderer built before the catalog was
+// resolved must degrade to the backend message instead of panicking or printing
+// a key.
+func TestUpdateProgressTextWithoutACatalog(t *testing.T) {
+	progress := update.UpdateProgress{Stage: StageDownloading, Message: "Downloading 12.0MB / 43.6MB"}
+	if got := UpdateProgressText(nil, progress); got != progress.Message {
+		t.Errorf("UpdateProgressText with no catalog = %q, want the backend message", got)
+	}
+}
+
+// TestRenderUpdateShowsNoByteCounters pins the parity decision. The event
+// carries downloaded, total and speed, and the update modal shows none of them
+// -- it renders a bar and one sentence. A terminal that added the counters would
+// be reporting more than the window does, in the one place the two are supposed
+// to read the same.
+func TestRenderUpdateShowsNoByteCounters(t *testing.T) {
+	var out bytes.Buffer
+	renderer := NewProgressRenderer(Options{Mode: ModeTTY}, progressCatalog(t, "zh"), &out)
+	renderer.RenderUpdate(updateEvent(StageDownloading, 42))
+	renderer.Close()
+
+	written := out.String()
+	for _, absent := range []string{
+		FormatBytes(19_200_000),
+		FormatBytes(45_700_000),
+		FormatBytes(2_200_000) + "/s",
+	} {
+		if strings.Contains(written, absent) {
+			t.Errorf("the update line carries the byte counter %q the window does not show: %q", absent, written)
+		}
+	}
+	// The percentage is still there: the modal feeds downloadProgress.percent
+	// straight to its bar, and so does this.
+	if !strings.Contains(written, strings.Repeat(barFilled, BarWidth*42/100)) {
+		t.Errorf("the update line has no bar at 42%%: %q", written)
+	}
+}
+
+// TestRenderUpdateJSON writes one line per event, verbatim: the payload is
+// update.UpdateProgress as the service emitted it, which is the same object the
+// window receives over the event bus.
+func TestRenderUpdateJSON(t *testing.T) {
+	var out bytes.Buffer
+	renderer := NewProgressRenderer(Options{Mode: ModeJSON}, progressCatalog(t, "zh"), &out)
+	renderer.RenderUpdate(updateEvent(StageDownloading, 42))
+	renderer.RenderUpdate(updateEvent(StageDone, 100))
+	renderer.Close()
+
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("json mode wrote %d lines, want one per event:\n%s", len(lines), out.String())
+	}
+	var first update.UpdateProgress
+	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+		t.Fatalf("the first line is not an update.UpdateProgress document: %v\n%s", err, lines[0])
+	}
+	if first.Stage != StageDownloading || first.Percent != 42 || first.DownloadedBytes != 19_200_000 {
+		t.Errorf("the json line does not carry the event verbatim: %+v", first)
+	}
+	// No envelope and no discriminator field: the two progress streams are
+	// separable by the streams they are on, and by their own shapes.
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(lines[1]), &document); err != nil {
+		t.Fatalf("the second line is not an object: %v", err)
+	}
+	if got, want := topLevelKeys(document), jsonKeysOf(t, update.UpdateProgress{}); !slices.Equal(got, want) {
+		t.Errorf("the json line marshals to %v, want the service struct's %v", got, want)
+	}
+}
+
+// TestRenderUpdateTTY covers the redraw and the bar rules. Verifying keeps its
+// bar because the window keeps its Progress up until the done event arrives, and
+// done has none because that event swaps the modal for the "update ready" one.
+func TestRenderUpdateTTY(t *testing.T) {
+	var out bytes.Buffer
+	renderer := NewProgressRenderer(Options{Mode: ModeTTY}, progressCatalog(t, "zh"), &out)
+
+	renderer.RenderUpdate(updateEvent(StageDownloading, 42))
+	renderer.RenderUpdate(updateEvent(StageDownloading, 42)) // identical frame: dropped
+	renderer.RenderUpdate(updateEvent(StageDownloading, 50))
+	renderer.RenderUpdate(updateEvent(StageVerifying, 100))
+	renderer.RenderUpdate(updateEvent(StageDone, 100))
+	renderer.Close()
+
+	body := strings.TrimSuffix(out.String(), "\n")
+	frames := strings.Split(body, "\r")[1:]
+	if len(frames) != 4 {
+		t.Fatalf("got %d frames, want 4 (the identical redraw is dropped):\n%q", len(frames), frames)
+	}
+	if !strings.Contains(frames[0], barFilled) || !strings.Contains(frames[1], barFilled) {
+		t.Errorf("the downloading frames have no bar: %q", frames[:2])
+	}
+	if !strings.Contains(frames[2], barFilled) {
+		t.Errorf("the verifying frame lost its bar, which the window still shows: %q", frames[2])
+	}
+	if strings.Contains(frames[3], barFilled) {
+		t.Errorf("the done frame draws a bar the window has already replaced: %q", frames[3])
+	}
+	if want := progressCatalog(t, "zh").T("progress.updateDone", nil); !strings.Contains(frames[3], want) {
+		t.Errorf("the done frame = %q, want it to carry %q", frames[3], want)
+	}
+}
+
+// TestRenderUpdateTTYTone mirrors how the window colours the row: completion is
+// green, work in progress is quiet.
+func TestRenderUpdateTTYTone(t *testing.T) {
+	var out bytes.Buffer
+	renderer := NewProgressRenderer(Options{Mode: ModeTTY, Color: true}, progressCatalog(t, "zh"), &out)
+	renderer.RenderUpdate(updateEvent(StageDone, 100))
+	renderer.Close()
+	if !strings.Contains(out.String(), ansiGreen) {
+		t.Errorf("the done frame is not green: %q", out.String())
+	}
+}
+
+// TestRenderUpdatePlain is the decimation rule applied to the update stream: one
+// line per stage change and one per ten percent of the download, so a pipe or a
+// CI log gets a readable dozen lines rather than a few hundred.
+func TestRenderUpdatePlain(t *testing.T) {
+	var out bytes.Buffer
+	renderer := NewProgressRenderer(Options{Mode: ModePlain}, progressCatalog(t, "zh"), &out)
+
+	for percent := 0; percent <= 100; percent += 4 {
+		renderer.RenderUpdate(updateEvent(StageDownloading, percent))
+	}
+	renderer.RenderUpdate(updateEvent(StageDownloading, 100)) // same decile: dropped
+	renderer.RenderUpdate(updateEvent(StageVerifying, 100))
+	renderer.RenderUpdate(updateEvent(StageVerifying, 100)) // same stage: dropped
+	renderer.RenderUpdate(updateEvent(StageDone, 100))
+	renderer.Close()
+
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	// 11 download lines (0%%, 10%%, ... 100%%) plus verifying plus done.
+	if len(lines) != 13 {
+		t.Fatalf("plain mode wrote %d lines, want 13:\n%s", len(lines), out.String())
+	}
+	// Every one of the eleven carries a different number. That is the whole
+	// reason the downloading line prints the percentage at all: decimated to one
+	// line per decile and worded the same way each time, the log would show a
+	// download progressing without ever showing how far it had got.
+	//
+	// The events step by four percent, so a decile is written at the first event
+	// that reaches it -- 12% opens the second, not 10%.
+	for i, want := range []string{"0%", "12%", "20%", "32%", "40%", "52%", "60%", "72%", "80%", "92%", "100%"} {
+		if !strings.Contains(lines[i], want) {
+			t.Errorf("line %d = %q, want it to carry %q", i, lines[i], want)
+		}
+		if !strings.HasPrefix(lines[i], "下载中... ") {
+			t.Errorf("line %d = %q, want a download line", i, lines[i])
+		}
+	}
+	if lines[len(lines)-2] != "验证完整性中..." {
+		t.Errorf("second-to-last line = %q", lines[len(lines)-2])
+	}
+	if lines[len(lines)-1] != "下载完成" {
+		t.Errorf("last line = %q, want the update modal's own done sentence", lines[len(lines)-1])
+	}
+	for _, line := range lines {
+		if strings.Contains(line, barFilled) {
+			t.Errorf("plain mode drew a bar: %q", line)
+		}
+	}
+}
+
+// TestRenderUpdateRespectsQuietAndNil: --quiet suppresses progress in every
+// mode, and a renderer that was never built must not crash a service callback.
+func TestRenderUpdateRespectsQuietAndNil(t *testing.T) {
+	for _, mode := range []Mode{ModeTTY, ModePlain, ModeJSON} {
+		var out bytes.Buffer
+		renderer := NewProgressRenderer(Options{Mode: mode, Quiet: true}, progressCatalog(t, "zh"), &out)
+		renderer.RenderUpdate(updateEvent(StageDownloading, 42))
+		renderer.Close()
+		if out.Len() != 0 {
+			t.Errorf("mode %v wrote %q under --quiet", mode, out.String())
+		}
+	}
+	var missing *ProgressRenderer
+	missing.RenderUpdate(updateEvent(StageDownloading, 42))
+	missing.Close()
 }
