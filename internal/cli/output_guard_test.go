@@ -254,6 +254,21 @@ func TestCliWordingIsSharedWithTheGUI(t *testing.T) {
 		"detail.gpUninstallConfirm",
 		"detail.gpUninstallConfirmDesc",
 		"detail.gpUninstallSuccess",
+		"settings.settingsSaved",
+		"settings.githubTokenSaved",
+		"settings.githubTokenCleared",
+		"settings.githubTokenEmpty",
+		"settings.githubTokenClear",
+		"settings.githubTokenClearDesc",
+		"settings.installPathConfirm",
+		"settings.installPathConfirmDesc",
+		"settings.installPathResetConfirm",
+		"settings.installPathResetConfirmDesc",
+		"settings.installPathSuccess",
+		"endpoint.confirmSave",
+		"endpoint.confirmSaveDesc",
+		"endpoint.confirmResetOne",
+		"endpoint.confirmResetOneDesc",
 	}
 	used := translatedKeys(t)
 	for _, lang := range []string{"zh", "en"} {

@@ -23,15 +23,16 @@ type SettingsResult struct {
 	DefaultInstallPath string             `json:"defaultInstallPath"`
 }
 
-// newSettingsCommand builds `svc settings`. Only `show` exists in this phase:
-// `set` and `token` change state and belong to P4, where `token` also gets the
-// read-from-stdin treatment the design requires (no shell history, no echo).
+// newSettingsCommand builds `svc settings`. `show` reads the file; `set` and
+// `token` write it and live in cmd_settings.go, which is also where the
+// read-from-stdin treatment the token needs is explained.
 func (r *runner) newSettingsCommand() *cobra.Command {
 	settings := &cobra.Command{
 		Use:     "settings",
-		Short:   "Inspect svc's settings",
+		Short:   "Inspect and change svc's settings",
 		Aliases: []string{"config"},
 	}
+	settings.AddCommand(r.newSettingsSetCommand(), r.newSettingsTokenCommand())
 	settings.AddCommand(&cobra.Command{
 		Use:   "show",
 		Short: "Print the effective settings",
@@ -139,15 +140,16 @@ type EndpointsResult struct {
 func (r *runner) newEndpointsCommand() *cobra.Command {
 	endpoints := &cobra.Command{
 		Use:   "endpoints",
-		Short: "Inspect the SDK download endpoints",
+		Short: "Inspect and override the SDK download endpoints",
 	}
+	endpoints.AddCommand(r.newEndpointsSetCommand(), r.newEndpointsUnsetCommand())
 	endpoints.AddCommand(&cobra.Command{
 		Use:   "list",
 		Short: "List every SDK's default and effective endpoint",
 		Long: "List each SDK's built-in download endpoint next to the one actually in effect.\n" +
 			"\n" +
-			"The two differ only where an override was saved. 'svc endpoints set' and\n" +
-			"'unset' change them and belong to a later phase, since they write settings.json.",
+			"The two differ only where an override was saved; 'svc endpoints set' writes one\n" +
+			"and 'svc endpoints unset' removes it again.",
 		Args: r.noArgs(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			core, err := r.readCore()
