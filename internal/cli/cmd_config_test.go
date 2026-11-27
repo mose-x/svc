@@ -590,3 +590,77 @@ func TestPrintProxyChecksRendersTheGUISentences(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckProxyReportsATransportFailure covers the one outcome that carries no
+// apperr code: a host the transport could not reach. It exits 1 rather than 6
+// because ExitCodeForError has no marker to read, and that is the service's
+// classification, not the command's -- inventing a code here would put two
+// answers to "was this a network problem?" in the tree.
+//
+// The failure comes from a closed loopback PROXY port, which is the only way to
+// get one hermetically: the SSRF guard refuses loopback targets, and a real
+// unreachable hostname costs either a 10s client timeout or a DNS dependency.
+func TestCheckProxyReportsATransportFailure(t *testing.T) {
+	seed := func(home string) {
+		writeSettings(t, home, config.AppSettings{
+			Proxy: config.ProxySettings{
+				Enabled:  true,
+				Mode:     "custom",
+				Protocol: "http",
+				URL:      "http://127.0.0.1:1",
+			},
+		})
+	}
+	target := "http://cli-check-proxy-target.example/probe"
+
+	t.Run("text", func(t *testing.T) {
+		code, s := pipedRun(t, seed, "--lang", "en", "settings", "check-proxy", target)
+		if code != ExitError {
+			t.Fatalf("exit = %d, want %d; stderr:\n%s", code, ExitError, s.stderr)
+		}
+		lines := outLines(s)
+		if len(lines) != 1 {
+			t.Fatalf("stdout has %d lines, want one:\n%s", len(lines), s.stdout)
+		}
+		// The GUI's sentence, once. A "connection failed: connection failed:"
+		// stutter here means the service wrapped the reason in the phrase both
+		// shells already put in front of it.
+		if count := strings.Count(lines[0], "connection failed"); count != 1 {
+			t.Errorf("the failure line says %q %dx, want it exactly once:\n%s", "connection failed", count, lines[0])
+		}
+		if !strings.HasPrefix(lines[0], target+" ") {
+			t.Errorf("the failure line does not start with the target: %q", lines[0])
+		}
+		if !strings.Contains(lines[0], target) || !strings.Contains(lines[0], "refused") {
+			t.Errorf("the failure line lost the transport's own reason:\n%s", lines[0])
+		}
+	})
+
+	t.Run("--json keeps the rendered reason and the stable fields", func(t *testing.T) {
+		code, s := pipedRun(t, seed, "--json", "settings", "check-proxy", target)
+		if code != ExitError {
+			t.Fatalf("exit = %d, want %d", code, ExitError)
+		}
+		var result ProxyCheckResult
+		decodeJSON(t, s, &result)
+		if result.Failed != 1 || len(result.Checks) != 1 || result.Checks[0].OK {
+			t.Fatalf("result = %+v, want one failed check", result)
+		}
+		if result.Checks[0].URL != target {
+			t.Errorf("url = %q, want %q", result.Checks[0].URL, target)
+		}
+		if strings.Contains(result.Checks[0].Error, "[svc:") {
+			t.Errorf("a raw apperr marker reached a machine-readable field: %q", result.Checks[0].Error)
+		}
+		// The document carries the reason, not the sentence: `ok`, `url` and
+		// `name` are already separate fields, so a consumer has no use for the
+		// localized "{{target}} connection failed: ..." wrapper the text mode
+		// renders around it -- and no business parsing one either.
+		if strings.Contains(result.Checks[0].Error, "connection failed") {
+			t.Errorf("error = %q, want the bare reason with no sentence wrapped around it", result.Checks[0].Error)
+		}
+		if !strings.Contains(result.Checks[0].Error, "refused") {
+			t.Errorf("error = %q, want the transport's own cause", result.Checks[0].Error)
+		}
+	})
+}

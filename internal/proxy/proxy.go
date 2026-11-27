@@ -59,7 +59,13 @@ func (s *Service) CheckProxy(targetURL string) error {
 		if resp != nil {
 			resp.Body.Close()
 		}
-		return fmt.Errorf("connection failed: %w", err)
+		// Returned bare rather than wrapped in "connection failed: %w". Both
+		// shells already put that phrase in front of the reason --
+		// settings.proxyCheckFail is "{{target}} connection failed: {{error}}"
+		// -- so the wrap read "Google connection failed: connection failed:
+		// Get ...". The transport error is a *url.Error, which names the
+		// method, the URL and the cause and needs no help from here.
+		return err
 	}
 	resp.Body.Close()
 
