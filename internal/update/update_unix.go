@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"svc/internal/apperr"
-	"svc/internal/helpers"
 )
 
 func getUpdateFilePath() string {
@@ -121,16 +120,37 @@ if [ -f "$plist" ] && [ -x /usr/libexec/PlistBuddy ]; then
 fi`, exeQ, exeQ)
 }
 
+// buildRelaunchBlock renders the two script lines that start the binary the
+// swap just put in place -- or nothing at all when relaunch is false.
+//
+// The GUI passes true: the window Quit closed has to come back, or "update
+// installed" ends with the application simply gone. The CLI passes false,
+// because `svc` with no arguments launches the GUI, so a script that restarted
+// the binary would open a window at the end of a terminal command. That is the
+// one thing the CLI contract forbids outright, and it is also why the CLI's
+// script goes out through detach: a relaunching script that inherited stdout
+// would print its own echo lines after the command's result had been written.
+//
+// exeQ is the already shell-quoted path of the binary. The script self-deletes
+// either way; only the launch is conditional.
+func buildRelaunchBlock(relaunch bool, message, exeQ string) string {
+	if !relaunch {
+		return ""
+	}
+	return fmt.Sprintf("echo \"%s\"\nnohup %s > /dev/null 2>&1 &\n", message, exeQ)
+}
+
 // buildUnixUpdateScript renders the /bin/sh body for ApplyUpdate. Extracted so
 // the wait/backup/replace/verify/rollback logic can be unit-tested without
 // launching the updater for real (it touches the running binary + quits the
 // app). All paths are shell-quoted by the caller's Sprintf arguments.
-func buildUnixUpdateScript(pid int, currentExe, bak, newExe, expectedHash string) string {
+func buildUnixUpdateScript(pid int, currentExe, bak, newExe, expectedHash string, relaunch bool) string {
 	exeQ := shellQuote(currentExe)
 	bakQ := shellQuote(bak)
 	newQ := shellQuote(newExe)
 	hashQ := shellQuote(expectedHash)
 	plistSync := buildBundleVersionSync(exeQ)
+	launch := buildRelaunchBlock(relaunch, "Starting new version...", exeQ)
 	return fmt.Sprintf(`#!/bin/sh
 expected_hash=%s
 echo "Waiting for application to close..."
@@ -178,18 +198,17 @@ if [ "$actual_hash" != "$expected_hash" ]; then
     exit 1
 fi
 %s
-echo "Starting new version..."
-nohup %s > /dev/null 2>&1 &
-rm -f "$0"
-`, hashQ, pid, bakQ, bakQ, exeQ, bakQ, exeQ, bakQ, exeQ, newQ, exeQ, newQ, exeQ, newQ, bakQ, exeQ, bakQ, exeQ, exeQ, exeQ, exeQ, bakQ, exeQ, bakQ, exeQ, plistSync, exeQ)
+%srm -f "$0"
+`, hashQ, pid, bakQ, bakQ, exeQ, bakQ, exeQ, bakQ, exeQ, newQ, exeQ, newQ, exeQ, newQ, bakQ, exeQ, bakQ, exeQ, exeQ, exeQ, exeQ, bakQ, exeQ, bakQ, exeQ, plistSync, launch)
 }
 
 // buildUnixRollbackScript renders the /bin/sh body for RollbackUpdate.
 // Extracted for the same testability reasons as buildUnixUpdateScript.
-func buildUnixRollbackScript(pid int, bak, currentExe string) string {
+func buildUnixRollbackScript(pid int, bak, currentExe string, relaunch bool) string {
 	exeQ := shellQuote(currentExe)
 	bakQ := shellQuote(bak)
 	plistSync := buildBundleVersionSync(exeQ)
+	launch := buildRelaunchBlock(relaunch, "Starting restored version...", exeQ)
 	return fmt.Sprintf(`#!/bin/sh
 echo "Waiting for application to close..."
 timeout=60
@@ -211,10 +230,8 @@ if ! mv -f %s %s 2>/dev/null; then
 fi
 chmod +x %s
 %s
-echo "Starting restored version..."
-nohup %s > /dev/null 2>&1 &
-rm -f "$0"
-`, pid, bakQ, exeQ, bakQ, exeQ, bakQ, exeQ, plistSync, exeQ)
+%srm -f "$0"
+`, pid, bakQ, exeQ, bakQ, exeQ, bakQ, exeQ, plistSync, launch)
 }
 
 // ApplyUpdate launches a background /bin/sh script that: waits for the
@@ -231,7 +248,10 @@ rm -f "$0"
 // Both the script and the payload it references get unpredictable
 // CreateTemp-based names (see writeTempScript / secureUpdatePayload) instead
 // of the old fixed /tmp paths, which were a symlink/TOCTOU hazard.
-func (u *Updater) ApplyUpdate() error {
+//
+// opts decides how the script is launched and whether it restarts the binary
+// afterwards; see ApplyOptions.
+func (u *Updater) ApplyUpdate(opts ApplyOptions) error {
 	currentExe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get current program path: %w", err)
@@ -262,7 +282,7 @@ func (u *Updater) ApplyUpdate() error {
 
 	bak := backupPath(currentExe)
 	pid := os.Getpid()
-	scriptContent := buildUnixUpdateScript(pid, currentExe, bak, securePayload, expectedHash)
+	scriptContent := buildUnixUpdateScript(pid, currentExe, bak, securePayload, expectedHash, opts.Relaunch)
 
 	scriptPath, err := writeTempScript("svc_updater_*.sh", scriptContent)
 	if err != nil {
@@ -270,9 +290,7 @@ func (u *Updater) ApplyUpdate() error {
 		return fmt.Errorf("failed to create update script: %w", err)
 	}
 
-	cmd := helpers.CreateCmd("/bin/sh", scriptPath)
-	cmd.Dir = os.TempDir()
-	if err := cmd.Start(); err != nil {
+	if err := startSwapScript("/bin/sh", []string{scriptPath}, opts); err != nil {
 		os.Remove(scriptPath)
 		restorePayload()
 		return fmt.Errorf("failed to launch update script: %w", err)
@@ -288,7 +306,10 @@ func (u *Updater) ApplyUpdate() error {
 // because the running binary cannot be overwritten on Unix while it's executing
 // (the kernel keeps the inode alive, but copy semantics differ across FSes).
 // The script gets an unpredictable CreateTemp-based name (see writeTempScript).
-func (u *Updater) RollbackUpdate() error {
+//
+// opts decides how the script is launched and whether it restarts the binary
+// afterwards; see ApplyOptions.
+func (u *Updater) RollbackUpdate(opts ApplyOptions) error {
 	currentExe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get current program path: %w", err)
@@ -299,16 +320,14 @@ func (u *Updater) RollbackUpdate() error {
 	}
 
 	pid := os.Getpid()
-	scriptContent := buildUnixRollbackScript(pid, bak, currentExe)
+	scriptContent := buildUnixRollbackScript(pid, bak, currentExe, opts.Relaunch)
 
 	scriptPath, err := writeTempScript("svc_rollback_*.sh", scriptContent)
 	if err != nil {
 		return fmt.Errorf("failed to create rollback script: %w", err)
 	}
 
-	cmd := helpers.CreateCmd("/bin/sh", scriptPath)
-	cmd.Dir = os.TempDir()
-	if err := cmd.Start(); err != nil {
+	if err := startSwapScript("/bin/sh", []string{scriptPath}, opts); err != nil {
 		os.Remove(scriptPath)
 		return fmt.Errorf("failed to launch rollback script: %w", err)
 	}

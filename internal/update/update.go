@@ -17,7 +17,9 @@ import (
 
 	"svc/internal/apperr"
 	"svc/internal/config"
+	"svc/internal/detach"
 	"svc/internal/downloader"
+	"svc/internal/helpers"
 	"svc/internal/logger"
 	"svc/internal/proxy"
 	"svc/internal/sdk"
@@ -410,6 +412,66 @@ func (u *Updater) fetchAssetSha256(client *http.Client, assets []githubAsset, fi
 		}
 	}
 	return ""
+}
+
+// ApplyOptions tells ApplyUpdate and RollbackUpdate how the calling shell wants
+// the platform swap performed. Both shells run the same script over the same
+// bytes; what differs is what the script does at its end and where its output
+// goes while it works.
+type ApplyOptions struct {
+	// Relaunch starts the new binary once the swap has finished, and lets the
+	// swap script inherit this process's descriptors.
+	//
+	// The GUI sets it. The window Quit just closed has to come back, or
+	// "update installed" ends with the application simply gone; and a bundled
+	// .app has no terminal for the script's echo lines to land in, so
+	// inheriting costs nothing.
+	//
+	// The CLI leaves it false, for two reasons that are really one. A command
+	// that opens a window when it finishes is not a command -- the CLI design
+	// makes that a red line rather than a preference -- and a script that
+	// outlives the process which spawned it must not keep writing to that
+	// process's stdout, where its lines would land after the shell prompt had
+	// already returned and, in a --json run, after the document that is
+	// supposed to be the whole of stdout. With Relaunch false the script goes
+	// out through internal/detach instead, which sends its stdio to the null
+	// device and never inherits a descriptor.
+	Relaunch bool
+}
+
+// startInherited launches a swap script the way the GUI always has: through
+// helpers.CreateCmd, from os.TempDir, inheriting this process's descriptors,
+// with nothing waiting for the child.
+var startInherited = func(exe string, argv []string) error {
+	cmd := helpers.CreateCmd(exe, argv...)
+	cmd.Dir = os.TempDir()
+	return cmd.Start()
+}
+
+// detachedSpawn is detach.Spawn behind a variable.
+//
+// Both variables exist so that the choice startSwapScript makes is observable.
+// The two branches differ in whether a console window can appear and in whose
+// stdout the script's own echo lines land, and neither difference shows up in
+// a returned error -- a test that only checked for nil would pass whichever
+// branch ran.
+var detachedSpawn = detach.Spawn
+
+// startSwapScript runs a platform swap script the way opts asks for it.
+//
+// The two branches are not two implementations of one idea, and are not meant
+// to converge. The relaunching branch is the path the GUI has always run, kept
+// as it was. The other goes through detach.Spawn, which is where the CLI's
+// no-console-window and no-inherited-descriptor guarantees live, and which also
+// reaps the child so a long-lived parent cannot accumulate zombies.
+func startSwapScript(exe string, argv []string, opts ApplyOptions) error {
+	if opts.Relaunch {
+		return startInherited(exe, argv)
+	}
+	// LogFile stays empty on purpose: the child's stdio goes to the null
+	// device rather than to a log, so a swap the user asked for from a terminal
+	// cannot append to svc's own diagnostics behind their back.
+	return detachedSpawn(exe, argv, detach.Options{Dir: os.TempDir()})
 }
 
 type UpdateProgress struct {

@@ -317,7 +317,10 @@
     "doctorRunSwitch": "run 'svc switch <sdk> <version>' to regenerate the shim config",
     "doctorShimReinstalled": "the shim binary was reinstalled",
     "doctorAllOk": "All checks passed",
-    "doctorIssues": "{{broken}} check(s) broken, {{repaired}} repaired"
+    "doctorIssues": "{{broken}} check(s) broken, {{repaired}} repaired",
+    "selfRollbackDesc": "Restores the previous binary from the .bak backup the last update created; the current version is lost. A background script performs the swap after svc exits and does not start svc again, so run it once the rollback has finished.",
+    "selfUpdateApplied": "The swap script has taken over and svc is exiting. The new version is not started for you, so run svc again once the swap has finished.",
+    "selfRollbackApplied": "The rollback script has taken over and svc is exiting. The restored version is not started for you, so run svc again once the rollback has finished."
   },
   "errors": {
     "app-not-initialized": "The application is not fully initialized. Please restart the app and try again.",

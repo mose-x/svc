@@ -318,15 +318,21 @@ func (a *App) DownloadUpdate(downloadURL, expectedSha256 string) error {
 }
 
 // ApplyUpdate swaps in the downloaded update and restarts.
+//
+// Relaunch is true here and stays true for the GUI: the window Quit is about
+// to close has to come back, or "update installed" ends with the application
+// simply gone. The CLI passes false, because a terminal command that opens a
+// window when it finishes is not a command.
 func (a *App) ApplyUpdate() error {
-	err := a.updater.ApplyUpdate()
+	err := a.updater.ApplyUpdate(update.ApplyOptions{Relaunch: true})
 	logOp("ApplyUpdate", err)
 	return err
 }
 
-// RollbackUpdate restores the previous binary from the .bak backup.
+// RollbackUpdate restores the previous binary from the .bak backup and
+// restarts, for the same reason ApplyUpdate does.
 func (a *App) RollbackUpdate() error {
-	err := a.updater.RollbackUpdate()
+	err := a.updater.RollbackUpdate(update.ApplyOptions{Relaunch: true})
 	logOp("RollbackUpdate", err)
 	return err
 }

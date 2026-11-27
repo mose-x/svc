@@ -79,8 +79,14 @@ func TestCompletionListsTheCommandTree(t *testing.T) {
 			t.Fatalf("svc __complete self = exit %d, want %d; stderr:\n%s", code, ExitOK, s.stderr)
 		}
 		candidates := completionCandidates(s)
-		if !slices.Contains(candidates, "check") {
-			t.Errorf("`svc self ` offers [%s]; %q is missing", strings.Join(candidates, " "), "check")
+		// All three, and not merely the read-only one: `self update` and
+		// `self rollback` are the commands a user is most likely to be looking
+		// for when they type `svc self <TAB>`, and a completion that offered
+		// only `check` would send them back to the README.
+		for _, want := range []string{"check", "update", "rollback"} {
+			if !slices.Contains(candidates, want) {
+				t.Errorf("`svc self ` offers [%s]; %q is missing", strings.Join(candidates, " "), want)
+			}
 		}
 	})
 
