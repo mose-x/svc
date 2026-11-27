@@ -179,6 +179,13 @@ func TestCliCatalogGroupHasNoDeadKeys(t *testing.T) {
 // Go 1.22.0?" would be caught here rather than by a user noticing the two
 // shells disagree.
 //
+// `about` and `self check` are the same discipline applied to the About tab:
+// its four row labels, its "up to date" toast, and the two sentences its update
+// modal is built from are reused rather than reworded. The one addition is
+// `cli.downloadURL`, a label the modal has no need for because it turns the URL
+// into a button -- and a terminal that printed a bare URL under nothing would
+// leave a reader guessing what the line was.
+//
 // The exceptions are deliberate and listed in cmd_clean.go: `clean logs` and
 // `clean inactive` port bindings no component calls, so there is no GUI sentence
 // to borrow and their wording lives in the `cli` group instead.
@@ -269,6 +276,18 @@ func TestCliWordingIsSharedWithTheGUI(t *testing.T) {
 		"endpoint.confirmSaveDesc",
 		"endpoint.confirmResetOne",
 		"endpoint.confirmResetOneDesc",
+		"about.version",
+		"about.goVersion",
+		"about.license",
+		"about.repo",
+		"about.upToDate",
+		"about.newVersion",
+		"about.currentVersion",
+		"settings.proxyCheckBaidu",
+		"settings.proxyCheckGoogle",
+		"settings.proxyCheckSuccess",
+		"settings.proxyCheckFail",
+		"settings.proxyUrlRequired",
 	}
 	used := translatedKeys(t)
 	for _, lang := range []string{"zh", "en"} {

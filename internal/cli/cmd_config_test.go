@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/base64"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -353,5 +354,239 @@ func TestEndpointsEffectiveColumnPrefersTheOverride(t *testing.T) {
 	}
 	if count := strings.Count(lines[2], "https://go.dev"); count != 2 {
 		t.Errorf("the Go row %q shows the default %d times, want it in both columns", lines[2], count)
+	}
+}
+
+// The `check-proxy` tests never reach the network, and cannot: CheckProxy's
+// SSRF guard refuses loopback and private addresses, so an httptest server is
+// exactly the target it is built to reject. That guard is the reason the
+// command is testable at all -- every case below is a refusal svc decides on
+// before it opens a socket -- and the reason the success path is asserted on
+// the renderer instead of on a probe.
+
+func TestCheckProxyRefusesTargetsTheSsrfGuardOwns(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+		// want is the catalog key the refusal is rendered from, and the
+		// parameters the service put in the marker.
+		want   string
+		params map[string]string
+	}{
+		{
+			name:   "a loopback address",
+			url:    "http://127.0.0.1:1/probe",
+			want:   "errors.private-ip",
+			params: map[string]string{"host": "127.0.0.1"},
+		},
+		{
+			name:   "a private address",
+			url:    "http://192.168.1.1/probe",
+			want:   "errors.private-ip",
+			params: map[string]string{"host": "192.168.1.1"},
+		},
+		{
+			name:   "a scheme that is not http",
+			url:    "ftp://example.com/probe",
+			want:   "errors.scheme-not-allowed",
+			params: map[string]string{"scheme": "ftp"},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			code, s := pipedRun(t, nil, "--lang", "en", "settings", "check-proxy", testCase.url)
+			// private-ip and scheme-not-allowed are both proxy policy, and
+			// policy is the ExitNetwork class: retrying on a better connection
+			// will not help, but neither is anything broken.
+			if code != ExitNetwork {
+				t.Fatalf("svc settings check-proxy %s = exit %d, want %d; stderr:\n%s",
+					testCase.url, code, ExitNetwork, s.stderr)
+			}
+			reason := catalogWord(t, "en", testCase.want, testCase.params)
+			// A URL typed on the command line is reported as itself: the two
+			// button labels belong to the window's buttons, not to the URLs.
+			want := catalogWord(t, "en", "settings.proxyCheckFail",
+				map[string]string{"target": testCase.url, "error": reason})
+			if lines := outLines(s); len(lines) != 1 || lines[0] != want {
+				t.Errorf("stdout = %q, want the one line %q", lines, want)
+			}
+			// The refusal carries no raw marker into either stream.
+			if strings.Contains(s.stdout.String()+s.stderr.String(), "[svc:") {
+				t.Errorf("an apperr marker reached the user:\nstdout:%s\nstderr:%s", s.stdout, s.stderr)
+			}
+		})
+	}
+}
+
+func TestCheckProxyReportsEveryTargetItWasGiven(t *testing.T) {
+	t.Run("two failures are two result lines and one nonzero exit", func(t *testing.T) {
+		code, s := pipedRun(t, nil, "--lang", "en", "settings", "check-proxy",
+			"http://127.0.0.1:1/a", "http://10.0.0.1/b")
+		if code != ExitNetwork {
+			t.Fatalf("svc settings check-proxy with two bad targets = exit %d, want %d", code, ExitNetwork)
+		}
+		if lines := outLines(s); len(lines) != 2 {
+			t.Fatalf("stdout has %d lines, want one per target:\n%s", len(lines), s.stdout)
+		}
+		if !strings.Contains(outLines(s)[1], "http://10.0.0.1/b") {
+			t.Errorf("the second line does not name the second target:\n%s", s.stdout)
+		}
+	})
+
+	t.Run("--json keeps the per-target outcomes apart", func(t *testing.T) {
+		code, s := pipedRun(t, nil, "--json", "settings", "check-proxy",
+			"http://127.0.0.1:1/a", "ftp://example.com/b")
+		if code != ExitNetwork {
+			t.Fatalf("svc --json settings check-proxy = exit %d, want %d", code, ExitNetwork)
+		}
+		var result ProxyCheckResult
+		decodeJSON(t, s, &result)
+		if got, want := jsonKeysOf(t, result), []string{"checks", "failed"}; !slices.Equal(got, want) {
+			t.Errorf("ProxyCheckResult marshals to %v, want %v", got, want)
+		}
+		if result.Failed != 2 || len(result.Checks) != 2 {
+			t.Fatalf("result = %+v, want two failed checks", result)
+		}
+		for _, check := range result.Checks {
+			if check.OK {
+				t.Errorf("%+v reports success for a refused target", check)
+			}
+			if check.Name != "" {
+				t.Errorf("%+v carries a button name for a URL typed on the command line", check)
+			}
+			if check.Error == "" {
+				t.Errorf("%+v failed without saying why", check)
+			}
+			if strings.Contains(check.Error, "[svc:") {
+				t.Errorf("%+v puts a raw apperr marker in a machine-readable field", check)
+			}
+		}
+	})
+}
+
+func TestCheckProxyGuardsAnEmptyCustomProxyAddress(t *testing.T) {
+	cases := []struct {
+		name     string
+		proxy    config.ProxySettings
+		refused  bool
+		wantNote string
+	}{
+		{
+			name:    "custom mode with no address is refused",
+			proxy:   config.ProxySettings{Enabled: true, Mode: "custom", URL: "   "},
+			refused: true,
+		},
+		{
+			name:  "custom mode with an address is probed",
+			proxy: config.ProxySettings{Enabled: true, Mode: "custom", URL: "http://127.0.0.1:7890"},
+		},
+		{
+			name:  "system mode with no address is probed",
+			proxy: config.ProxySettings{Enabled: true, Mode: "system"},
+		},
+		{
+			name:  "a disabled proxy with a stale custom mode is probed",
+			proxy: config.ProxySettings{Enabled: false, Mode: "custom"},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			seed := func(home string) {
+				writeSettings(t, home, config.AppSettings{Proxy: testCase.proxy})
+			}
+			// The loopback target is refused either way, so the only thing the
+			// guard can change is WHICH refusal arrives: exit 2 with the
+			// window's warning before anything is sent, or exit 6 from the
+			// probe itself.
+			code, s := pipedRun(t, seed, "--lang", "en", "settings", "check-proxy", "http://127.0.0.1:1/probe")
+			if testCase.refused {
+				if code != ExitUsage {
+					t.Fatalf("exit = %d, want %d; stderr:\n%s", code, ExitUsage, s.stderr)
+				}
+				if want := catalogWord(t, "en", "settings.proxyUrlRequired", nil); !strings.Contains(s.stderr.String(), want) {
+					t.Errorf("stderr does not carry %q:\n%s", want, s.stderr)
+				}
+				if s.stdout.Len() != 0 {
+					t.Errorf("stdout = %q, want nothing: the probe never ran", s.stdout)
+				}
+				return
+			}
+			if code != ExitNetwork {
+				t.Fatalf("exit = %d, want %d -- the guard fired when it should not have; stderr:\n%s",
+					code, ExitNetwork, s.stderr)
+			}
+			if want := catalogWord(t, "en", "settings.proxyUrlRequired", nil); strings.Contains(s.stderr.String(), want) {
+				t.Errorf("stderr carries the empty-address warning for %+v:\n%s", testCase.proxy, s.stderr)
+			}
+		})
+	}
+}
+
+// TestCheckProxyDefaultsAreTheGUITwoButtons pins the no-argument target list to
+// the window's own probe buttons, by reading them out of SettingsPage.tsx. The
+// parity is the whole reason the command has a default: a terminal that probed
+// a different pair of sites would answer a different question than the one the
+// "test proxy" buttons answer.
+func TestCheckProxyDefaultsAreTheGUITwoButtons(t *testing.T) {
+	targets := (&runner{}).proxyCheckTargets(nil)
+	if len(targets) != 2 {
+		t.Fatalf("check-proxy with no argument probes %d targets, want the GUI's two: %+v", len(targets), targets)
+	}
+	if targets[0].name != proxyTargetBaidu || targets[1].name != proxyTargetGoogle {
+		t.Errorf("the default tokens are %q then %q, want %q then %q in the order the buttons are laid out",
+			targets[0].name, targets[1].name, proxyTargetBaidu, proxyTargetGoogle)
+	}
+	if proxyTargetBaidu != "baidu" || proxyTargetGoogle != "google" {
+		t.Errorf("the tokens are %q/%q: they are the machine-readable names in --json, so a rename is a decision",
+			proxyTargetBaidu, proxyTargetGoogle)
+	}
+
+	page := string(repoFile(t, "frontend/src/components/Settings/SettingsPage.tsx"))
+	for name, url := range proxyCheckURLs {
+		if !strings.Contains(page, url) {
+			t.Errorf("SettingsPage.tsx no longer probes %s at %s; the CLI default is stale", name, url)
+		}
+		if got := (&runner{}).proxyCheckTargets([]string{url}); got[0].name != "" {
+			t.Errorf("an explicit %s was resolved to the button name %q; a typed URL is reported as itself", url, got[0].name)
+		}
+	}
+	// A token typed as an argument is a URL, not a lookup key.
+	if got := (&runner{}).proxyCheckTargets([]string{proxyTargetBaidu}); got[0].url != proxyTargetBaidu {
+		t.Errorf("check-proxy %s probes %q, want the literal argument", proxyTargetBaidu, got[0].url)
+	}
+}
+
+// TestPrintProxyChecksRendersTheGUISentences covers the half no probe can
+// reach: the success line, and the two labels. The SSRF guard means a passing
+// check cannot be produced by a test, so the renderer is driven directly with
+// the result a passing probe would have left behind.
+func TestPrintProxyChecksRendersTheGUISentences(t *testing.T) {
+	s := newStreams()
+	r := newRunner(t, s, globalFlags{lang: "en"}, homeAt(t, t.TempDir()))
+	if err := r.resolveOptions(); err != nil {
+		t.Fatalf("resolveOptions: %v", err)
+	}
+	r.printProxyChecks(ProxyCheckResult{Checks: []ProxyCheck{
+		{URL: proxyCheckURLs[proxyTargetBaidu], Name: proxyTargetBaidu, OK: true},
+		{URL: proxyCheckURLs[proxyTargetGoogle], Name: proxyTargetGoogle, Error: "timed out"},
+		{URL: "https://example.com/probe", Error: "refused"},
+	}})
+
+	want := []string{
+		catalogWord(t, "en", "settings.proxyCheckSuccess",
+			map[string]string{"target": catalogWord(t, "en", "settings.proxyCheckBaidu", nil)}),
+		catalogWord(t, "en", "settings.proxyCheckFail",
+			map[string]string{"target": catalogWord(t, "en", "settings.proxyCheckGoogle", nil), "error": "timed out"}),
+		catalogWord(t, "en", "settings.proxyCheckFail",
+			map[string]string{"target": "https://example.com/probe", "error": "refused"}),
+	}
+	lines := outLines(s)
+	if len(lines) != len(want) {
+		t.Fatalf("got %d lines, want %d:\n%s", len(lines), len(want), s.stdout)
+	}
+	for i, line := range want {
+		if lines[i] != line {
+			t.Errorf("line %d = %q, want %q", i, lines[i], line)
+		}
 	}
 }
