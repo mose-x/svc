@@ -232,3 +232,45 @@ func TestBuildTransport(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckProxy_TransportErrorIsNotPrefixed pins that a transport failure is
+// returned as the *url.Error net/http produced, with nothing wrapped around it.
+// Both shells render settings.proxyCheckFail as
+// "{{target}} connection failed: {{error}}", so a reason that itself began with
+// that phrase read to the user as
+//
+//	Google connection failed: connection failed: Get "https://...": ...
+//
+// The failure is produced by pointing the PROXY at a closed loopback port
+// rather than by naming an unreachable target: the SSRF guard refuses loopback
+// targets but says nothing about the proxy address, and a refused dial is
+// immediate, so the test needs neither DNS nor a route to the internet.
+func TestCheckProxy_TransportErrorIsNotPrefixed(t *testing.T) {
+	sm := config.NewSettingsManager(t.TempDir())
+	settings := sm.Get()
+	settings.Proxy = config.ProxySettings{
+		Enabled:  true,
+		Mode:     "custom",
+		Protocol: "http",
+		URL:      "http://127.0.0.1:1",
+	}
+	if err := sm.Update(settings); err != nil {
+		t.Fatalf("sm.Update: %v", err)
+	}
+
+	err := New(sm).CheckProxy("http://proxy-check-target.example/probe")
+	if err == nil {
+		t.Fatal("CheckProxy through a closed proxy port succeeded; want a transport failure")
+	}
+	text := err.Error()
+	if count := strings.Count(text, "connection failed"); count != 0 {
+		t.Errorf("the reason repeats the phrase both shells already put in front of it (%dx): %s", count, text)
+	}
+	// What the bare *url.Error still carries is the part a user acts on: the
+	// verb, the target, and the cause.
+	for _, want := range []string{"Get", "proxy-check-target.example", "refused"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the reason lost %q: %s", want, text)
+		}
+	}
+}
