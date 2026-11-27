@@ -289,6 +289,7 @@
     "versionsTruncated": "仅显示前 {{shown}} 个，共 {{total}} 个",
     "waitingForLock": "另一个 svc 操作正在进行中，等待其完成…",
     "alreadyActive": "{{version}} 已经是当前激活版本",
+    "downloadURL": "下载地址",
     "freedBytes": "已释放 {{size}}",
     "cleanLogsConfirm": "删除全部 {{count}} 个日志文件？",
     "cleanLogsDesc": "今天的活动日志会被重建为空文件；此操作不可撤销",

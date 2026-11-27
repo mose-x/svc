@@ -41,6 +41,8 @@ func (r *runner) addCommands(root *cobra.Command) {
 		r.newSettingsCommand(),
 		r.newEndpointsCommand(),
 		r.newDoctorCommand(),
+		r.newAboutCommand(),
+		r.newSelfCommand(),
 		// Hidden: the background carrier `svc versions` spawns. Registered last
 		// because it is the one command no user is ever meant to type.
 		r.newRefreshCommand(),
@@ -139,6 +141,17 @@ func (r *runner) rangeArgs(minimum, maximum int) cobra.PositionalArgs {
 // whose arity has a floor and no ceiling.
 func (r *runner) atLeastArgs(count int) cobra.PositionalArgs {
 	return r.usageArgs(cobra.MinimumNArgs(count))
+}
+
+// anyArgs accepts every positional argument the command is given, including
+// none. It exists rather than reaching for cobra.ArbitraryArgs directly so
+// that a wrong-arity failure keeps becoming a UsageError everywhere, and so
+// that the command still records itself as the usage target -- the two things
+// the wrappers above are for. The commands using it have a default behaviour
+// for zero arguments and a repeated one for many, which is an arity with
+// neither a floor nor a ceiling.
+func (r *runner) anyArgs() cobra.PositionalArgs {
+	return r.usageArgs(cobra.ArbitraryArgs)
 }
 
 // usageError reports a mistake in how the command was written, recording cmd as

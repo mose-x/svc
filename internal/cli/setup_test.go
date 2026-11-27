@@ -196,6 +196,32 @@ func jsonKeysOf(t *testing.T, value any) []string {
 	return keys
 }
 
+// runAboutAt invokes the CLI against an existing home directory with an
+// injected about.json, as a pipe.
+//
+// The injection is the point: runArgs leaves AboutJSON nil, which ParseAppInfo
+// turns into its built-in fallback -- version 0.1.0, and no update URL at all.
+// That is the right default for a command that never reads them and useless for
+// the two that do, because `svc about` would report the fallback and
+// `svc self check` would fail before reaching a server. home is the caller's
+// rather than a fresh one so a test can seed settings.json into it first and
+// then assert on the files the run did or did not leave behind.
+func runAboutAt(t *testing.T, home string, aboutJSON []byte, args ...string) (int, *streams) {
+	t.Helper()
+	s := newStreams()
+	code := Execute(ExecuteInput{
+		Args:      args,
+		Catalogs:  shippedCatalogs(t),
+		AboutJSON: aboutJSON,
+		Stdin:     s.stdin,
+		Stdout:    s.stdout,
+		Stderr:    s.stderr,
+		OpenHome:  homeAt(t, home),
+		Env:       &Environment{},
+	})
+	return code, s
+}
+
 // sharedHome binds ONE temporary home and returns a function that invokes the
 // CLI against it as often as the test likes. Every other helper builds a fresh
 // home per call, which is right for a single invocation and wrong for comparing
