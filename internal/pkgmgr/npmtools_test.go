@@ -354,3 +354,22 @@ func TestGlobalPackageOps_Guards(t *testing.T) {
 		t.Fatalf("no active node = %v; want need-sdk", err)
 	}
 }
+
+// TestProtectedGlobalPackage pins the exported predicate on its own. The CLI
+// checks it before it asks a user to approve an uninstall -- a prompt whose
+// only possible outcome is a refusal trains people to answer without reading
+// -- so the rule has to be readable from outside this package rather than
+// copied into the command layer, where a second copy is a second place to drift.
+func TestProtectedGlobalPackage(t *testing.T) {
+	if !ProtectedGlobalPackage("npm") {
+		t.Error("npm is not protected, and every operation in this file shells out to it")
+	}
+	// "NPM" is not the same package name: npm's grammar is lowercase, so an
+	// uppercase spelling is rejected as an invalid name before protection is
+	// ever consulted, exactly as it is inside UninstallGlobalPackage.
+	for _, name := range []string{"typescript", "@scope/pkg", "npmx", "corepack", "", "NPM"} {
+		if ProtectedGlobalPackage(name) {
+			t.Errorf("%q is protected; npm is the only package this service refuses to remove", name)
+		}
+	}
+}

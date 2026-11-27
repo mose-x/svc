@@ -37,6 +37,7 @@ func (r *runner) addCommands(root *cobra.Command) {
 		r.newStorageCommand(),
 		r.newCleanCommand(),
 		r.newLogsCommand(),
+		r.newPkgCommand(),
 		r.newSettingsCommand(),
 		r.newEndpointsCommand(),
 		// Hidden: the background carrier `svc versions` spawns. Registered last
@@ -208,6 +209,17 @@ func (r *runner) sdkThenFile(cmd *cobra.Command, args []string, toComplete strin
 		return nil, cobra.ShellCompDirectiveDefault
 	}
 	return r.sdkCompletion(cmd, args, toComplete)
+}
+
+// noFileCompletion offers nothing and, more importantly, suppresses the
+// shell's own filename completion. It is what a command uses for an argument
+// that names neither a file nor an SDK -- a package manager, an npm package --
+// where the default of handing the line back to the shell would fill the
+// argument with paths from the working directory. Listing the directories
+// around a user who typed `svc pkg install ` is not a worse answer than no
+// candidates, it is a wrong one.
+func (r *runner) noFileCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return nil, cobra.ShellCompDirectiveNoFileComp
 }
 
 // completionRegistry resolves the run configuration and builds a registry

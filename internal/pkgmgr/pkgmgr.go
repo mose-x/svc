@@ -219,7 +219,7 @@ func (s *Service) InstallPackageManager(name string) error {
 		}
 		// cnpm itself lives on the China mirror; the flag is a distinct argv
 		// element so it never disturbs the user's configured registry.
-		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "cnpm", "--registry="+npmRegistryChina)
+		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "cnpm", "--registry="+RegistryChina)
 	case "nrm":
 		if s.cfg.GetActiveVersion("nodejs") == "" {
 			return apperr.New(apperr.NeedSdk, map[string]string{"name": name, "sdk": "Node.js"})
@@ -256,7 +256,7 @@ func (s *Service) UpdatePackageManager(name string) error {
 	case "pnpm":
 		return s.installWithCorepackFallback("pnpm", "latest", false)
 	case "cnpm":
-		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "cnpm@latest", "--registry="+npmRegistryChina)
+		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "cnpm@latest", "--registry="+RegistryChina)
 	case "nrm":
 		return s.runScopedCommand("npm", sdk.NodeJS, "install", "-g", "nrm@latest")
 	case "corepack":

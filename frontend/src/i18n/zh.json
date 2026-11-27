@@ -294,7 +294,11 @@
     "cleanLogsDesc": "今天的活动日志会被重建为空文件；此操作不可撤销",
     "cleanInactiveConfirm": "删除 {{sdk}} 的 {{count}} 个非激活版本？",
     "cleanInactiveDesc": "只保留当前激活版本；此操作不可撤销",
-    "removedVersions": "已删除 {{count}} 个版本"
+    "removedVersions": "已删除 {{count}} 个版本",
+    "stateNotInstalled": "未安装",
+    "noPackageManagers": "{{sdk}} 没有可用的包管理器",
+    "noActiveVersion": "{{sdk}} 没有激活版本",
+    "registryModeLabel": "源类型"
   },
   "errors": {
     "app-not-initialized": "应用尚未完全初始化，请重启应用后重试",

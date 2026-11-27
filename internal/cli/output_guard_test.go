@@ -174,9 +174,10 @@ func TestCliCatalogGroupHasNoDeadKeys(t *testing.T) {
 // render, each with an exact counterpart in the home page. The second are the
 // sentences the mutating commands print -- every confirmation question, its
 // explanation, and every success or warning toast has a literal counterpart in
-// DetailPanel.tsx, PathModal.tsx or SettingsPage.tsx, so a CLI that grew its own
-// wording for "Uninstall Go 1.22.0?" would be caught here rather than by a user
-// noticing the two shells disagree.
+// DetailPanel.tsx, PathModal.tsx, SettingsPage.tsx, NpmRegistrySection.tsx or
+// GlobalPackagesSection.tsx, so a CLI that grew its own wording for "Uninstall
+// Go 1.22.0?" would be caught here rather than by a user noticing the two
+// shells disagree.
 //
 // The exceptions are deliberate and listed in cmd_clean.go: `clean logs` and
 // `clean inactive` port bindings no component calls, so there is no GUI sentence
@@ -238,6 +239,21 @@ func TestCliWordingIsSharedWithTheGUI(t *testing.T) {
 		"logs.cleanFail",
 		"settings.noContent",
 		"sidebar.loadingSdkDetail",
+		"detail.packageManagers",
+		"detail.pmInstallSuccess",
+		"detail.pmUpdateSuccess",
+		"detail.npmRegistry",
+		"detail.registryOfficial",
+		"detail.registryChinaMirror",
+		"detail.registryCustom",
+		"detail.registryScopeHint",
+		"detail.registrySwitchSuccess",
+		"detail.globalPackages",
+		"detail.globalPackagesEmpty",
+		"detail.gpInstallSuccess",
+		"detail.gpUninstallConfirm",
+		"detail.gpUninstallConfirmDesc",
+		"detail.gpUninstallSuccess",
 	}
 	used := translatedKeys(t)
 	for _, lang := range []string{"zh", "en"} {
