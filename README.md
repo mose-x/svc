@@ -246,6 +246,16 @@ svc completion powershell  # install into your PowerShell profile
 
 Candidates come from the command tree, the registered SDK identifiers and the installed versions. Completing an argument never touches the network, so pressing Tab cannot hang the shell.
 
+### Agent Skill
+
+`skills/svc` is a [Codex skill](https://github.com/openai/skills): the brief an AI agent reads before driving this CLI. It carries the rules that are easy to get wrong from `--help` alone -- never run bare `svc`, pass `--yes` to anything that writes, parse `--json` rather than the table, what each exit code means -- and `skills/svc/references/commands.md` holds the full command table. `skill_test.go` walks the live tree against both files, so the skill cannot drift the way a copied list would.
+
+```bash
+cp -R skills/svc ~/.codex/skills/svc     # or let Codex's skill-installer fetch it
+```
+
+It is documentation only: no binary reads it, and `svc <command> --help` stays the authority.
+
 ## Comparison with Alternatives
 
 | Feature | SVC (This Project) | nvm / sdkman / pyenv etc. | VS Code Plugins |
@@ -322,6 +332,8 @@ svc/
 │   │   ├── i18n/              # en / zh translation files
 │   │   └── types/             # TypeScript type definitions
 │   └── wailsjs/               # Auto-generated Wails bindings
+├── skills/
+│   └── svc/                   # Agent skill: how an AI agent should drive the CLI
 ├── winres/                    # Windows resource (icon, manifest)
 └── .github/workflows/
     ├── ci.yml                 # lint + test + commit-lint on PR
