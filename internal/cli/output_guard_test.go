@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -307,5 +308,89 @@ func TestCliWordingIsSharedWithTheGUI(t *testing.T) {
 				t.Errorf("%q is no longer read by any command; the CLI and the GUI have stopped sharing that wording", key)
 			}
 		}
+	}
+}
+
+// --- the external-manager label ---------------------------------------------
+
+// managerParamGoRE finds the value expression of one `"manager":` entry in a Go
+// map literal. The value stops at the first comma or closing brace, which is
+// what keeps the match right when gofmt wraps the literal onto a second line --
+// the shape `svc status` had when it was the one site that skipped the table.
+var managerParamGoRE = regexp.MustCompile(`(?s)"manager":\s*([^,}]+)`)
+
+// managerParamTsRE is the same scan for the frontend's object literals. It
+// stops at the end of the line, which is enough: prettier puts a call's opening
+// on the same line as its key even when it wraps the arguments underneath.
+var managerParamTsRE = regexp.MustCompile(`(?m)\bmanager:\s*([^\n]*)`)
+
+// frontendTsxFiles lists the shipped components, so the guard reads the same
+// sources the GUI is built from rather than a copy of them.
+func frontendTsxFiles(t *testing.T) []string {
+	t.Helper()
+	root := filepath.Join(repoRootRel, "frontend/src")
+	var files []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".tsx") {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	if len(files) == 0 {
+		t.Fatalf("found no .tsx under %s; the walk is broken", root)
+	}
+	sort.Strings(files)
+	return files
+}
+
+// TestNoShellRendersAManagerWithoutItsLabel pins an invariant both shells rely
+// on and neither can check at runtime: a detected version manager is reported
+// internally by its machine name ("nvm-rust") and shown to a user by its label
+// ("nvm(nvm-rust)"). Every rendering site has to go through the table, because
+// the failure is invisible -- both strings are plausible, and a user who reads
+// "nvm-rust" in the terminal and "nvm(nvm-rust)" in the window has no way to
+// know they are the same installation. `svc status` was the one site that did
+// not, for as long as the CLI has had a status command.
+func TestNoShellRendersAManagerWithoutItsLabel(t *testing.T) {
+	goSites := 0
+	for _, file := range sourceFiles(t) {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		for _, match := range managerParamGoRE.FindAllStringSubmatch(string(body), -1) {
+			goSites++
+			value := strings.TrimSpace(match[1])
+			if !strings.HasPrefix(value, "ExternalManagerLabel(") {
+				t.Errorf("%s passes %q as a `manager` param, which renders the machine name instead of the label", file, value)
+			}
+		}
+	}
+	if goSites == 0 {
+		t.Error("no `manager` param anywhere in this package; either the rendering moved or managerParamGoRE has rotted")
+	}
+
+	tsxSites := 0
+	for _, file := range frontendTsxFiles(t) {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		for _, match := range managerParamTsRE.FindAllStringSubmatch(string(body), -1) {
+			tsxSites++
+			value := strings.TrimSpace(match[1])
+			if !strings.HasPrefix(value, "externalManagerName(") {
+				t.Errorf("%s passes %q as a `manager` param, which renders the machine name instead of the label", file, value)
+			}
+		}
+	}
+	if tsxSites == 0 {
+		t.Error("no `manager` param in any shipped component; either the rendering moved or managerParamTsRE has rotted")
 	}
 }

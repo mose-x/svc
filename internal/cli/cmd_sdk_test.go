@@ -502,6 +502,46 @@ func TestConflictsTreatsTheListAsAResult(t *testing.T) {
 	})
 }
 
+// TestStatusLabelsTheExternalManager is the regression test for the one site
+// that skipped the label table: `svc status` described an nvm-rust installation
+// as "nvm-rust" while `svc list`, `svc path` and every frontend surface called
+// the same thing "nvm(nvm-rust)". printStatus is driven directly rather than
+// through a whole invocation because the field it renders comes from a PATH
+// scan, and getPlatformPath caches that behind a sync.Once -- a test cannot make
+// the host resolve `node` into a manager home on demand.
+func TestStatusLabelsTheExternalManager(t *testing.T) {
+	s := newStreams()
+	r := newRunner(t, s, globalFlags{}, tempHome(t, nil))
+	if err := r.resolveOptions(); err != nil {
+		t.Fatalf("resolveOptions: %v", err)
+	}
+
+	r.printStatus(StatusResult{
+		Status: &sdk.SdkStatus{
+			SdkType:         sdk.NodeJS,
+			DisplayName:     sdk.SdkDisplayName(sdk.NodeJS),
+			ExternalManager: "nvm-rust",
+			PathConfigured:  true,
+			PathBinary:      "/Users/mose/.nvm.rust/shims/node",
+		},
+		InstallDir:  "/Users/mose/.svc/nodejs",
+		PathVersion: "24.19.0",
+	})
+
+	text := s.stdout.String()
+	want := catalogWord(t, "zh", "detail.externalManagerHint",
+		map[string]string{"manager": sdk.ExternalManagerLabel("nvm-rust")})
+	raw := catalogWord(t, "zh", "detail.externalManagerHint", map[string]string{"manager": "nvm-rust"})
+	if !strings.Contains(text, want) {
+		t.Errorf("stdout does not carry the labeled hint %q:\n%s", want, text)
+	}
+	// The labeled sentence contains the machine name as a substring, so the
+	// unlabeled rendering has to be ruled out on its own rather than by absence.
+	if strings.Contains(text, raw) {
+		t.Errorf("stdout carries the unlabeled hint %q:\n%s", raw, text)
+	}
+}
+
 // TestPathStateUsesTheGuisOwnWords pins the label precedence to the four states
 // the home page renders, since the CLI borrows the catalog rather than
 // inventing a fifth vocabulary.
@@ -519,7 +559,9 @@ func TestPathStateUsesTheGuisOwnWords(t *testing.T) {
 	}{
 		{"managed wins over everything", sdk.SdkStatus{Configured: true, SystemProtected: true, ExternalManager: "nvm", PathConfigured: true}, "app.configured", nil},
 		{"system-managed next", sdk.SdkStatus{SystemProtected: true, ExternalManager: "nvm", PathConfigured: true}, "app.systemManaged", nil},
-		{"then an external manager", sdk.SdkStatus{ExternalManager: "nvm", PathConfigured: true}, "app.externalManager", map[string]string{"manager": "nvm"}},
+		// "nvm-rust" rather than "nvm": nvm's label IS "nvm", so a case built
+		// on it cannot tell a labeled render from a raw one. This one can.
+		{"then an external manager", sdk.SdkStatus{ExternalManager: "nvm-rust", PathConfigured: true}, "app.externalManager", map[string]string{"manager": "nvm(nvm-rust)"}},
 		{"then a bare PATH copy", sdk.SdkStatus{PathConfigured: true}, "app.inPathOnly", nil},
 		{"and otherwise nothing", sdk.SdkStatus{}, "app.notConfigured", nil},
 	}
@@ -551,8 +593,8 @@ func TestPathEntryStateUsesTheGuisOwnWords(t *testing.T) {
 	}{
 		{"managed", pathmgr.PathEntry{IsManaged: true, SdkType: "nodejs"}, catalogWord(t, "zh", "app.configured", nil)},
 		{"system-managed", pathmgr.PathEntry{SystemProtected: true, SdkType: "nodejs"}, catalogWord(t, "zh", "app.systemManaged", nil)},
-		{"externally managed", pathmgr.PathEntry{ExternalManager: "nvm", SdkType: "nodejs"},
-			catalogWord(t, "zh", "app.externalManager", map[string]string{"manager": "nvm"})},
+		{"externally managed", pathmgr.PathEntry{ExternalManager: "nvm-rust", SdkType: "nodejs"},
+			catalogWord(t, "zh", "app.externalManager", map[string]string{"manager": "nvm(nvm-rust)"})},
 		{"importable", pathmgr.PathEntry{SdkType: "nodejs"}, catalogWord(t, "zh", "cli.stateImportable", nil)},
 		{"nothing behind it", pathmgr.PathEntry{}, placeholderNone},
 	}

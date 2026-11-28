@@ -229,8 +229,13 @@ func (r *runner) printStatus(result StatusResult) {
 	}
 	if status.ExternalManager != "" {
 		r.printer.Blank()
+		// The label, not the machine name: every other place that renders a
+		// manager -- `svc list`'s note, the PATH column, `svc path`, and all
+		// eight sites in the frontend -- goes through the same table, and this
+		// was the one that did not. The GUI shows "nvm(nvm-rust)" for the same
+		// installation this line described as "nvm-rust".
 		r.printer.Line("%s", r.printer.T("detail.externalManagerHint",
-			map[string]string{"manager": status.ExternalManager}))
+			map[string]string{"manager": ExternalManagerLabel(status.ExternalManager)}))
 	}
 
 	r.printer.Blank()
