@@ -42,6 +42,46 @@ Key rules (full rules take precedence from the hook repo):
 - Settings/proxy/helpers/pkgmgr/logmgr/wailsrt: `internal/<pkg>/*_test.go`
 - Installer template: `internal/packaging/project_nsi_test.go`
 - RC file (Unix): `internal/shimmanager/rcfile_unix_test.go`
+- Shared bootstrap: `internal/appcore/appcore_test.go`; the GUI/CLI drift guard is `app_startup_test.go` in the root package
+- Operation lock: `internal/svclock/svclock_test.go`; windowless spawn: `internal/detach/*_test.go` including the `nospawn_guard_test.go` AST guard
+- CLI shell: `internal/cli/*_test.go` — one `cmd_<group>_test.go` per command group, plus the output layer (`output_test.go`, `format_test.go`), progress (`progress_test.go`), exit codes (`exitcode_test.go`), options/mode/confirm and `root_test.go`
+- CLI runtime and catalogs: `internal/cli/clirt/*_test.go`, `internal/cli/i18n/*_test.go` (`catalog_drift_test.go` pins the CLI reader to the frontend's `error.ts`)
+- CLI/GUI parity guards: `internal/cli/output_guard_test.go` (wording shared with the GUI, no dead `cli` keys), `progress_guard_test.go` (progress text read back out of the TSX), `events_guard_test.go` (event names), `dispatch_test.go` (legacy dispatch + SDK name collisions), `cmd_import_test.go` (`TestNoCliCommandReachesForAFileDialog`)
+- README guards: `readme_test.go` in the root package — the Homebrew install path, and the CLI chapter walked against the live command tree
+
+## Command-Line Shell
+
+`svc` is one binary with two shells. `main.go` asks `cli.Dispatch(os.Args[1:])` which one handles argv: no arguments launches the GUI, `init` / `setup` / `version` / `-v` / `--version` keep their original pre-CLI code paths byte for byte, and everything else goes to the cobra tree.
+
+- `internal/cli` — the cobra tree (`cmd_*.go`, one file per command group), the output layer, the progress renderers, the exit-code mapping and the op-lock wrapper.
+- `internal/cli/clirt` — the runtime adapter (signals, quit) behind an interface, so the tree is testable without Wails.
+- `internal/cli/i18n` — reads the GUI's own catalogs. The root package embeds `frontend/src/i18n/{zh,en}.json` (`i18n_embed.go`) and passes the bytes in, because only the root package can see `frontend/`.
+- `internal/appcore` — the service bootstrap both shells share. A CLI command never constructs a service itself.
+
+### Contracts a new command must keep
+
+- **stdout is results only.** Progress, notes, warnings and lock messages go to stderr (`Printer.Note`, `ProgressRenderer`). `svc list | grep` and `svc install --json | jq` both depend on it.
+- **`--json` emits exactly one document on stdout.** A command with nothing to report still emits one, so a cron job can parse unconditionally.
+- **Never open a window or a file dialog, and never relaunch the binary.** A path is an argument; a confirmation is `--yes`. `TestNoCliCommandReachesForAFileDialog` scans every `cmd_*.go` for dialog calls, and `runner.swapBinary` hard-codes `update.ApplyOptions{Relaunch: false}`.
+- **The exit code comes from the error, not from the command.** Return an `apperr` and `exitcode.go` maps its code; that table is exhaustive and `exitcode_test.go` fails when `apperr` declares a code the table lacks. A mistyped command line must be a `UsageError` (exit 2) rather than a bare `fmt.Errorf` (exit 1), which is what the `noArgs` / `exactArgs` / `rangeArgs` / `anyArgs` wrappers are for.
+- **Wording is borrowed from the GUI catalogs, not rewritten.** A command that ports a window reuses that window's keys; only text with no GUI counterpart goes into the `cli` group of *both* `zh.json` and `en.json`. `TestCliWordingIsSharedWithTheGUI` and `TestCliCatalogGroupHasNoDeadKeys` enforce the two halves.
+- **A mutating command takes the op lock after its confirmation**, through `runner.withOpLock`, at the outermost point of one user-visible operation. Never take it inside a service: installer calls storage, and the lock is not re-entrant.
+
+### Adding a command
+
+1. `internal/cli/cmd_<group>.go` plus `cmd_<group>_test.go` in the same package.
+2. Register the constructor in `addCommands` (`internal/cli/commands.go`). The list is explicit on purpose, so the whole shipped surface is visible in one place and the collision guard enumerates exactly that tree.
+3. The name must not collide with a binary any SDK installs (`npm`, `go`, `java`, ...) — `TestNoCommandNameCollidesWithAnSdkBinary` fails if it does. That is why the npm-scoped commands live under `svc pkg`.
+4. Bootstrap through `readCore()` unless the command genuinely writes. `writeCore()` is the only path to `appcore.LevelWrite`, the level permitted to edit the shell rc or the Windows registry PATH.
+5. Document it in the CLI chapter of **both** `README.md` and `README.ZH_CN.md`, as a table row or an example. `readme_test.go` walks the live command tree and fails until both do; it also pins the global-flag table, the exit-code table, the SDK count and the legacy invocations.
+
+### Testing a command
+
+Drive `cli.Execute` with buffers and inject the seams: `OpenHome` (a `config.Config` pointed at `t.TempDir()` via `SetHomeDir` / `SetSvcDir`), `Env` (so the resolved mode does not depend on whether the test binary happens to have a tty), and `Spawn` / `Swap` (so no background process outlives the suite). Never touch the real `~/.svc`, and never let a test run the real swap script: it waits for *this* process to exit and then renames the binary it ran from, which under `go test` is the test executable.
+
+### Help text stays English
+
+cobra's usage and help are not localized, and that is deliberate rather than an oversight. `--lang` is itself a flag, so the catalog cannot be resolved before the parse that failed; a translated usage template would mean a second copy of several hundred lines of `Short` / `Long` prose with nothing to diff it against. What users actually read — results, errors, progress — is localized through the catalogs, and the Chinese README carries the full command reference.
 
 ## TODO Tracking
 

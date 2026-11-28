@@ -7,7 +7,7 @@ A cross-platform desktop application for unified management of multiple SDK vers
 ## Features
 
 ### SDK Management
-- **18 SDKs Supported**: Node.js, JDK, Go, Python, Rust, Ruby, .NET, PHP, Perl, Maven, Gradle, Flutter, Android, Dart, and more
+- **14 SDKs Supported**: Node.js, JDK, Go, Python, Rust, Ruby, .NET, PHP, Perl, Maven, Gradle, Flutter, Android, Dart
 - **One-Click Install**: Fetch available versions from official sources and install with one click
 - **Version Switching**: Quickly switch between installed versions without re-downloading
 - **Reinstall**: Overwrite-install existing versions
@@ -45,6 +45,15 @@ A cross-platform desktop application for unified management of multiple SDK vers
 - **Cross-Platform Replace**: Unix uses a shell script (`pgrep` wait → backup → replace → relaunch); Windows uses a batch script (`tasklist` wait → backup → replace → relaunch) to handle running-binary locks
 - **Asset Naming**: `svc-{version}-{os}-{arch}.{ext}` (amd64 → x64), with a standalone `sha256sums.txt` shipped per release
 
+### Command-Line Interface
+- **One Binary, Two Shells**: `svc` with no arguments opens the window, `svc <command>` runs a command — both call the same services over the same files
+- **Full Coverage**: every operation the window offers has a command, from `svc install` to `svc self update`
+- **Scriptable**: `--json` puts one machine-readable document on stdout and moves progress to stderr, so `| jq` and `$( )` both work
+- **No Surprises**: no command opens a window or a file dialog, and none of them relaunches the app
+- **Stable Exit Codes**: 0–7, mapped from the same error codes the GUI translates
+
+See [Command Line](#command-line) for the full reference.
+
 ### User Experience
 - **Download Progress**: Real-time speed, progress, and size display
 - **Copy Download URL**: Copy SDK download links
@@ -65,12 +74,185 @@ A cross-platform desktop application for unified management of multiple SDK vers
 #### setting
 ![setting](./image/setting.png)
 
+## Command Line
+
+`svc` is one binary with two shells. Run it with no arguments and it launches the graphical application; run it with a command and it behaves like a CLI and exits. Both shells call the same services over the same files, so a version installed from a terminal shows up in the window, and the version the window activated is what `svc current` reports.
+
+```bash
+svc list                          # every SDK and its local state
+svc versions nodejs --lts         # what can be installed, newest first
+svc install nodejs 22.11.0        # download, verify, activate
+svc switch nodejs 20.18.0         # point the shims at an installed version
+svc current nodejs                # the active version, and nothing else
+svc doctor                        # check svc's own setup, repair what it can
+svc self update                   # update svc itself
+```
+
+Two guarantees hold for every command:
+
+- **Nothing opens a window or a file dialog.** A command that needs a path takes it as an argument (`svc import nodejs ./node-v22.11.0.tar.xz`), and a command that needs a yes takes `--yes`.
+- **Nothing is relaunched.** `svc self update` and `svc self rollback` hand the binary to a swap script and exit 0; the new version is there the next time you run `svc`.
+
+`svc <command> --help` prints the full description, arguments and exit codes of any command.
+
+### Legacy Invocations
+
+These predate the CLI and keep the behaviour they have always had. `svc version` in particular is parsed by scripts, so its single output line is frozen. `svc help` is the one that changed: the command tree answers it now, and it prints the real tree rather than the static four-line list it used to.
+
+| Invocation | Behaviour |
+|---|---|
+| `svc` | Launch the GUI |
+| `svc init`, `svc setup` | One-time shim setup: creates `~/.svc/shims` and adds the `.svc.rc` source line |
+| `svc version`, `svc -v`, `svc --version` | Print the single version line |
+| `svc help`, `svc -h`, `svc --help` | Print the command tree |
+
+### Global Flags
+
+| Flag | Effect |
+|---|---|
+| `-h`, `--help` | Print the help of the command you asked for |
+| `--json` | Machine-readable JSON on stdout; progress and notes move to stderr |
+| `-q`, `--quiet` | Results and errors only — no progress, no notes |
+| `-y`, `--yes` | Answer yes to every confirmation prompt |
+| `--no-color` | Never emit ANSI colour sequences |
+| `--no-wait` | Fail with exit 7 instead of waiting when another svc operation holds the lock |
+| `--lang zh\|en` | Message language. Default: `$SVC_LANG`, then `language` in `settings.json` |
+| `--install-path <dir>` | Operate on another SVC home for this run only; never saved |
+
+### Output
+
+The mode is chosen from the environment rather than from a flag:
+
+| Situation | Output |
+|---|---|
+| Interactive terminal | Coloured progress bar, tables, confirmation prompts |
+| Pipe or CI (stdout is not a tty) | One plain line per stage, decimated to every ten percent; no colour; a command that would ask refuses and tells you to pass `--yes` |
+| `--json` | The result on stdout as JSON; progress on stderr as one JSON object per line |
+
+**stdout is the result channel and nothing else.** Progress, warnings, lock notices and hints all go to stderr, which is what makes `svc list | grep`, `NODE_DIR=$(svc dir nodejs)/$(svc current nodejs)` and `svc install --json ... | jq` all safe.
+
+### Exit Codes
+
+Stable by contract: a script keys on the number rather than on a localized sentence.
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Unclassified failure |
+| 2 | Usage error — missing argument, unknown command or flag, an operation the SDK layout forbids |
+| 3 | Not found — unknown SDK, missing path, missing version directory, no backup to roll back to, no release asset for this platform |
+| 4 | Integrity — checksum mismatch, incomplete SDK tree, version mismatch |
+| 5 | Cancelled — SIGINT, or a declined confirmation prompt |
+| 6 | Network — HTTP status, proxy policy, disallowed scheme |
+| 7 | Busy — another svc process holds the operation lock and `--no-wait` was given |
+
+### Commands
+
+Aliases are in parentheses.
+
+**Inspect**
+
+| Command | What it prints |
+|---|---|
+| `svc list` (`ls`) | Every SDK: active version, installed version count, PATH state, conflicts |
+| `svc status <sdk>` | One SDK in full: active version, every installed version, install directory, what the copy on PATH reports itself as, system conflicts |
+| `svc current [<sdk>]` | The active version, bare, so `$(svc current nodejs)` works. With no argument, every SDK's. An SDK with no active version prints nothing and still exits 0 |
+| `svc dir <sdk>` | The install directory |
+| `svc url <sdk> <version>` | The download URL, with the configured proxy and GitHub mirror already applied |
+| `svc conflicts <sdk>` | System PATH and environment entries that compete with the shims. Exits 0 whether or not any were found |
+| `svc path` | Every PATH entry that looks like an SDK, what svc identified it as, and whether svc manages it |
+| `svc storage` | Disk usage per SDK, version counts, the active one, and the leftover download cache |
+| `svc about` | svc's own version, the Go version it was built with, its license and its repository |
+
+**Install and switch**
+
+| Command | What it does |
+|---|---|
+| `svc versions <sdk>` | The installable versions, marking the newest, the installed, the active and the LTS ones. `--lts`, `--limit N`, `--offline`, `--refresh` |
+| `svc install <sdk> <version>` | Download, verify and activate. Activation is not optional — installing also points the shims at the new version |
+| `svc switch <sdk> <version>` (`use`) | Point the shims and environment at an installed version. Reopen the terminal afterwards |
+| `svc reinstall <sdk> <version>` | Re-download an installed version over itself. The version must already be installed |
+| `svc uninstall <sdk> <version>` (`rm`) | Delete one version's directory. Uninstalling the active version is allowed, warns, and exits 0 |
+| `svc import <sdk> [<path>]` | Copy an archive or a directory into the SVC store, detect its version, activate it |
+| `svc import <sdk> --from-path` | Import the copy the SDK's command currently resolves to on the system PATH |
+| `svc doctor` | Run every self-check, repair what a startup can repair, report the rest. Exits 1 when something is broken |
+
+**Package managers and npm**
+
+| Command | What it does |
+|---|---|
+| `svc pkg list <sdk>` | The package managers of one SDK and their versions |
+| `svc pkg install <name>` | Install a package manager |
+| `svc pkg update <name>` | Update a package manager to its latest version |
+| `svc pkg registry` | The npm registry of the active Node.js |
+| `svc pkg registry set <url\|official\|china>` | Switch it |
+| `svc pkg global list` | The globally installed npm packages |
+| `svc pkg global install <package>` | Install a package globally into the active Node.js |
+| `svc pkg global update <package>` | Update a global package to its latest version |
+| `svc pkg global uninstall <package>` | Remove a globally installed npm package |
+
+The group is named `pkg` rather than `npm`: a subcommand may not share a name with a binary an SDK installs, and every Node.js ships `npm`.
+
+**Clean and logs**
+
+| Command | What it does |
+|---|---|
+| `svc clean tmp` | Empty the download and extraction cache |
+| `svc clean logs` | Delete every svc log file and reopen today's empty |
+| `svc clean inactive <sdk>` | Delete every version of an SDK except the active one |
+| `svc logs list` | List svc's own log files |
+| `svc logs show <file>` | Print one of them |
+| `svc logs dir` | The log directory |
+| `svc logs rm <file>...` | Delete log files |
+
+`svc clean` on its own lists its targets and deletes nothing.
+
+**Settings and endpoints**
+
+| Command | What it does |
+|---|---|
+| `svc settings show` | The effective settings, with the GitHub token masked |
+| `svc settings set <key> <value>` | Change one setting: `theme`, `language`, `downloadThreads`, `githubMirror`, `proxy.enabled`, `proxy.mode`, `proxy.url`, `proxy.protocol`, `installPath` |
+| `svc settings token` | Store the GitHub token, read from stdin so it never reaches the shell history. `--clear` removes it |
+| `svc settings check-proxy [url...]` | Test whether the configured proxy can reach a site |
+| `svc endpoints list` | Every SDK's default and effective download endpoint |
+| `svc endpoints set <sdk> <url>` | Override one SDK's download endpoint |
+| `svc endpoints unset <sdk>` | Restore that SDK's default endpoint |
+
+`svc settings` also answers to `svc config`. `settings set installPath` does not edit a field: it migrates the whole SDK tree, backs the old one up to the desktop and re-runs the shim setup.
+
+**svc itself**
+
+| Command | What it does |
+|---|---|
+| `svc self check` | Whether a newer svc release is published |
+| `svc self update` | Download it, verify its checksum, and hand the running binary to a swap script |
+| `svc self rollback` | Restore the `<exe>.bak` the previous update left behind |
+
+### Concurrency
+
+Every command that changes something svc owns — `install`, `reinstall`, `switch`, `uninstall`, `import`, `clean tmp`, `clean inactive`, the `pkg` mutations, `settings set`, `settings token`, `endpoints set`, `endpoints unset`, `self update`, `self rollback` — takes a cross-process lock on the SVC directory before touching `config.json`, `shims.json` or the shell rc. A terminal running next to an open window is serialized instead of racing it. By default a command waits and says so on stderr; `--no-wait` makes it fail with exit 7.
+
+The log commands are the exception and take no lock: they touch the log directory only, every svc process writes to it independently, and a file deleted under a running process is simply recreated.
+
+### Shell Completion
+
+```bash
+svc completion bash        # install into your bash completion dir
+svc completion zsh         # install as _svc somewhere on $fpath
+svc completion fish        # install into ~/.config/fish/completions
+svc completion powershell  # install into your PowerShell profile
+```
+
+Candidates come from the command tree, the registered SDK identifiers and the installed versions. Completing an argument never touches the network, so pressing Tab cannot hang the shell.
+
 ## Comparison with Alternatives
 
 | Feature | SVC (This Project) | nvm / sdkman / pyenv etc. | VS Code Plugins |
 |---|:---:|:---:|:---:|
-| Unified SDK management (18+ types) | ✅ | ❌ Single SDK per tool | ❌ Scattered |
+| Unified SDK management (14 types) | ✅ | ❌ Single SDK per tool | ❌ Scattered |
 | Graphical user interface | ✅ | ❌ CLI only | ✅ |
+| Command line covering the same operations | ✅ | ✅ | ❌ |
 | Auto PATH configuration | ✅ | ⚠️ Requires shell setup | ❌ |
 | Cross-platform desktop app | ✅ | ✅ | ✅ |
 | Multi-threaded download | ✅ | ❌ | – |
@@ -89,7 +271,7 @@ A cross-platform desktop application for unified management of multiple SDK vers
 
 The core advantage of this project lies in its **"one-stop, graphical, cross-platform"** SDK version management experience. It solves the pain point of developers having to install and manage multiple SDK versions by unifying what previously required multiple command-line tools (nvm, sdkman, pyenv, rustup, etc.) into a single, intuitive desktop application.
 
-No more memorizing CLI commands for each language, no more fiddling with shell config files, no more PATH bloat — just a clean GUI that works consistently across Windows, macOS, and Linux.
+No more memorizing a different CLI for each language, no more fiddling with shell config files, no more PATH bloat — one GUI and one command set that work consistently across Windows, macOS, and Linux. Use whichever shell fits the moment: the window for exploring, [the CLI](#command-line) for scripting and CI.
 
 ## Tech Stack
 
@@ -105,6 +287,13 @@ svc/
 ├── app.go                     # Wails App facade + runtime adapter
 ├── about.json                 # App metadata (version, license, updateUrl)
 ├── internal/
+│   ├── cli/                   # The command-line shell: cobra tree, output, exit codes
+│   │   ├── clirt/             # Runtime adapter (signals, quit) behind an interface
+│   │   └── i18n/              # Catalog reader shared with the GUI's wording
+│   ├── appcore/               # Service bootstrap shared by the GUI and the CLI
+│   ├── apperr/                # Typed error codes, translated by both shells
+│   ├── svclock/               # Cross-process operation lock (flock / LockFileEx)
+│   ├── detach/                # Windowless background spawn
 │   ├── installer/             # SDK install/switch/cancel + version status
 │   ├── importer/              # SDK import from archive/folder/PATH
 │   ├── storage/               # Uninstall, storage info, cache, path migration
@@ -121,6 +310,8 @@ svc/
 │   ├── extractor/             # Archive extraction (zip, tar.gz, 7z, etc.)
 │   ├── logger/                # Structured logging
 │   ├── pathmgr/               # PATH env management (unix/windows)
+│   ├── fsutil/                # Filesystem helpers shared across services
+│   ├── migrate/               # On-disk layout migrations
 │   ├── shim/                  # Shim executor + arg detection
 │   ├── shimmanager/           # Shim install + shell RC editing
 │   └── sdk/                   # Version fetching & installation per SDK
