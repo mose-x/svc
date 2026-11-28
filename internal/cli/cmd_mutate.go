@@ -239,6 +239,14 @@ func (r *runner) runInstall(action, sdkInput, version string) error {
 	if err != nil {
 		return err
 	}
+	// Refused before the status is even read. An SDK an external version manager
+	// owns is not something svc may install, and asking the user to confirm an
+	// operation that is already declined wastes their answer -- the service
+	// checks the same rule again, so this is a courtesy rather than the
+	// enforcement.
+	if err := core.Installer.ExternalManagerRefusal(string(kind)); err != nil {
+		return err
+	}
 	status, err := core.Installer.GetSdkStatus(string(kind))
 	if err != nil {
 		return err
@@ -249,18 +257,11 @@ func (r *runner) runInstall(action, sdkInput, version string) error {
 		}
 	}
 
-	// The two things the GUI puts in front of the user before the install
-	// starts: the conflict modal the panel raises on open, and the
-	// external-manager paragraph inside the install confirmation. Neither is
-	// shown for a reinstall, because the GUI's reinstall modal has no such
-	// paragraph.
+	// The conflict modal the GUI panel raises on open. Not shown for a
+	// reinstall, because the GUI's reinstall modal has no such paragraph. The
+	// external-manager paragraph that used to stand beside it is gone: the
+	// install it warned about is now refused outright, above.
 	r.noteSystemConflicts(core, string(kind))
-	if action == actionInstall && status.ExternalManager != "" {
-		r.printer.Note("%s", r.printer.T("detail.installExternalManagerWarn", map[string]string{
-			"sdk":     status.DisplayName,
-			"manager": ExternalManagerLabel(status.ExternalManager),
-		}))
-	}
 
 	question := r.printer.T("detail.confirmInstallSdk", map[string]string{
 		"sdk":     status.DisplayName,
@@ -328,6 +329,12 @@ func (r *runner) newSwitchCommand() *cobra.Command {
 				return err
 			}
 			version := args[1]
+			// Switching re-points the `node` shim at svc's copy, which is the
+			// same fight install is refused for. Uninstall is deliberately not
+			// refused: removing svc's own copy is how a user gets out.
+			if err := core.Installer.ExternalManagerRefusal(string(kind)); err != nil {
+				return err
+			}
 			status, err := core.Installer.GetSdkStatus(string(kind))
 			if err != nil {
 				return err

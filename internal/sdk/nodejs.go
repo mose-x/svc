@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -199,6 +200,102 @@ func resolveNodeExternalManager(binPath string) string {
 		return DetectNodeExternalManager(resolved)
 	}
 	return ""
+}
+
+// externalManagerLabels is the display-name table behind ExternalManagerLabel.
+// The detectors above report a machine name ("nvm-rust"); a sentence shown to a
+// user says "nvm(nvm-rust)", because that is the product the user installed and
+// nvm-rust is only its implementation. frontend/src/constants/sdk.ts keeps the
+// TypeScript copy, and a drift guard in the CLI package compares the two.
+var externalManagerLabels = map[string]string{
+	"nvm-rust": "nvm(nvm-rust)",
+	"nvm":      "nvm",
+}
+
+// ExternalManagerLabel renders a detected external version manager the way both
+// shells render it. An unrecognised manager keeps its machine name rather than
+// rendering as nothing: a manager added here must stay readable in the GUI and
+// in the terminal until both label tables catch up.
+func ExternalManagerLabel(manager string) string {
+	if label, ok := externalManagerLabels[manager]; ok {
+		return label
+	}
+	return manager
+}
+
+// ExternalManagerLabels returns a copy of the label table so a drift guard can
+// compare it against the TypeScript table it ports. A copy rather than the map
+// itself: a test that can edit the table can also make itself pass.
+func ExternalManagerLabels() map[string]string {
+	out := make(map[string]string, len(externalManagerLabels))
+	for manager, label := range externalManagerLabels {
+		out[manager] = label
+	}
+	return out
+}
+
+// DetectNodeManager reports which external Node version manager owns the
+// machine, or "" when none does. It is the authority behind refusing to manage
+// Node.js alongside nvm: two managers writing the same `node` shim is a fight
+// the user cannot see, so svc declines instead of quietly winning it.
+//
+// Two independent facts trigger it, and either one is enough:
+//
+//   - the node that PATH resolves to lives inside a manager's home, which is the
+//     copy the user actually runs today;
+//   - a manager's home exists at all (~/.nvm.rust, ~/.nvm, or %APPDATA%\nvm).
+//
+// The second is what makes the answer stable. The first flips off the moment
+// svc's own shim takes precedence in PATH, so a refusal built on it alone would
+// fire once and then silently allow every install after that -- and a rule that
+// depends on who won last is not a rule.
+//
+// goos, the two directories and dirExists are parameters rather than globals so
+// every platform's layout is testable on any host, which is the same reason
+// classifyPathCopy takes goos.
+func DetectNodeManager(goos, homeDir, configDir, pathBinary string, dirExists func(string) bool) string {
+	if manager := resolveNodeExternalManager(pathBinary); manager != "" {
+		return manager
+	}
+	if homeDir != "" {
+		// nvm-rs keeps ~/.nvm.rust on every platform; classic nvm keeps ~/.nvm.
+		if dirExists(filepath.Join(homeDir, ".nvm.rust")) {
+			return "nvm-rust"
+		}
+		if dirExists(filepath.Join(homeDir, ".nvm")) {
+			return "nvm"
+		}
+	}
+	// nvm-windows keeps its versions under %APPDATA%\nvm, with no dot prefix.
+	if goos == "windows" && configDir != "" && dirExists(filepath.Join(configDir, "nvm")) {
+		return "nvm"
+	}
+	return ""
+}
+
+// NodeManagerOnMachine runs DetectNodeManager against the real machine: the
+// user's home, the platform config directory (%APPDATA% on Windows) and the
+// node that PATH resolves to, with svc's own shims excluded so that a version
+// svc installed itself is never mistaken for an external manager's.
+func NodeManagerOnMachine() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = ""
+	}
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		configDir = ""
+	}
+	return DetectNodeManager(runtime.GOOS, homeDir, configDir, ResolveSystemCommand("node"), dirExists)
+}
+
+// dirExists reports whether path is a directory that is actually there. A
+// permission error counts as absent: a home svc cannot read is a home it cannot
+// manage either, and guessing "manager present" from an EACCES would refuse
+// installs on a machine that has no nvm at all.
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func (f *NodejsFetcher) GetLocalStatus() (*SdkStatus, error) {

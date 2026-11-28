@@ -78,6 +78,7 @@ var codeExitCodes = map[string]int{
 	"protected-import":        ExitUsage,
 	"protected-dir":           ExitUsage,
 	"managed-dir":             ExitUsage,
+	"managed-sdk":             ExitUsage,
 	"jdk-required":            ExitUsage,
 	"target-exists":           ExitUsage,
 	"nested-dirs":             ExitUsage,

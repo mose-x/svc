@@ -304,6 +304,26 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status?.sdkType])
 
+  // refuseExternalManager reports the backend's refusal to manage an SDK that an
+  // external version manager already owns (nvm-rust / nvm for Node.js), and
+  // returns true when the action was refused so no dialog opens. InstallSdk and
+  // SwitchVersion enforce the same rule server-side; answering here first is what
+  // keeps the user from confirming an operation that is already declined. The
+  // wording is the backend error's own key, so both paths say the same thing.
+  const refuseExternalManager = (
+    externalManager: string,
+    displayName: string,
+  ): boolean => {
+    if (!externalManager) return false
+    msgApi.error(
+      t('errors.managed-sdk', {
+        sdk: displayName,
+        manager: externalManagerName(externalManager),
+      }),
+    )
+    return true
+  }
+
   // Shared install flow without any confirm modal, so both entry points
   // (fresh install / reinstall) can wrap it in exactly one confirm dialog.
   const doInstall = (version: string) => {
@@ -331,24 +351,14 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
     // App-level progress already in flight for this SDK (local `installing`
     // state may have been lost to a key-based remount) — block duplicates.
     if (isDownloading) return
+    if (refuseExternalManager(status.externalManager, status.displayName))
+      return
     modal.confirm({
       title: t('detail.confirmInstallSdk', {
         sdk: status.displayName,
         version,
       }),
-      content: status.externalManager ? (
-        <div>
-          <p>{t('detail.confirmInstallDesc', { version })}</p>
-          <p style={{ color: '#faad14' }}>
-            {t('detail.installExternalManagerWarn', {
-              sdk: status.displayName,
-              manager: externalManagerName(status.externalManager),
-            })}
-          </p>
-        </div>
-      ) : (
-        t('detail.confirmInstallDesc', { version })
-      ),
+      content: t('detail.confirmInstallDesc', { version }),
       okText: t('app.confirm'),
       cancelText: t('app.cancel'),
       maskClosable: false,
@@ -359,6 +369,8 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
   const handleReinstall = (version: string) => {
     if (!status) return
     if (isDownloading) return
+    if (refuseExternalManager(status.externalManager, status.displayName))
+      return
     modal.confirm({
       title: t('detail.reinstallConfirm', { version }),
       content: t('detail.reinstallConfirmDesc'),
@@ -371,6 +383,10 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
   const handleSwitchVersion = (version: string) => {
     if (!status) return
     if (version === status.currentVersion) return
+    // Switching re-points the `node` shim at SVC's copy, which is the same fight
+    // the install refusal exists to prevent.
+    if (refuseExternalManager(status.externalManager, status.displayName))
+      return
     modal.confirm({
       title: t('detail.switchConfirm', { sdk: status.displayName, version }),
       content: t('detail.switchConfirmDesc'),

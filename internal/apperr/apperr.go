@@ -68,6 +68,12 @@ const (
 	// Retrying later succeeds without changing the command, which is what
 	// separates it from every usage failure.
 	OperationInProgress Code = "operation-in-progress"
+	// ManagedSdk is raised when svc is asked to install or switch an SDK that an
+	// external version manager already owns -- nvm-rust or nvm for Node.js. The
+	// managed-copy and managed-dir refusals are about a copy on disk that must
+	// not be imported; this one is about the machine, and it fires before
+	// anything is downloaded.
+	ManagedSdk Code = "managed-sdk"
 )
 
 // New builds the marked error. params may be nil; values are interpolated

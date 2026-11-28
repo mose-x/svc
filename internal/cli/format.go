@@ -4,6 +4,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"svc/internal/sdk"
 )
 
 // byteUnits is the unit table from frontend/src/utils/format.ts. It stops at
@@ -93,22 +95,11 @@ func formatFixed(value float64, digits int) string {
 		strings.Repeat("0", digits-len(fraction)) + fraction
 }
 
-// externalManagerLabels is the display-name table from
-// frontend/src/constants/sdk.ts. The services report a machine name ("nvm-rust")
-// and both shells show a label ("nvm(nvm-rust)"), so the table has to exist twice
-// and a drift guard in format_test.go keeps the two copies equal.
-var externalManagerLabels = map[string]string{
-	"nvm-rust": "nvm(nvm-rust)",
-	"nvm":      "nvm",
-}
-
 // ExternalManagerLabel renders a detected external version manager the way the
-// GUI renders it. An unrecognised manager is passed through unchanged, which is
-// what the TypeScript does too: a new manager shows up by its machine name in
-// both shells rather than as a blank in one of them.
+// GUI renders it. The table lives in the sdk package, next to the detectors that
+// produce the machine names it labels, because a service refusal carries the
+// label too: the CLI and the GUI have to be able to say the same sentence about
+// the same nvm installation, and a copy on each side is how they would drift.
 func ExternalManagerLabel(manager string) string {
-	if label, ok := externalManagerLabels[manager]; ok {
-		return label
-	}
-	return manager
+	return sdk.ExternalManagerLabel(manager)
 }
