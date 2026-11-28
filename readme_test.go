@@ -45,11 +45,7 @@ var homebrewReadmes = []struct {
 // heading up to (excluding) the heading that ends it.
 func homebrewSection(t *testing.T, file, sectionEnd string) string {
 	t.Helper()
-	raw, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatalf("read %s: %v", file, err)
-	}
-	content := string(raw)
+	content := readReadme(t, file)
 	const heading = "### Homebrew"
 	from := strings.Index(content, heading)
 	if from < 0 {
@@ -215,6 +211,23 @@ func subsection(chapter, heading string) string {
 	return strings.Join(lines[start:stop], "\n")
 }
 
+// readReadme returns one README with its line endings normalized to LF.
+//
+// .gitattributes forces LF for markdown, but a guard that depends on a
+// checkout setting staying the way it is, is a guard that fails on a machine
+// nobody tested it on -- and the failure is the confusing kind, because the
+// heading it reports as missing is visibly there and only the trailing \r
+// differs. Normalizing at the read makes every whole-line comparison below
+// platform-independent.
+func readReadme(t *testing.T, file string) string {
+	t.Helper()
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+	return strings.ReplaceAll(string(raw), "\r\n", "\n")
+}
+
 // sectionBetween returns the lines of a file from the line equal to `from` up
 // to (excluding) the line equal to `to`, or to the end of the file when `to`
 // never appears. Markdown headings are whole lines, and matching them as whole
@@ -222,11 +235,7 @@ func subsection(chapter, heading string) string {
 // same thing -- out of the result.
 func sectionBetween(t *testing.T, file, from, to string) string {
 	t.Helper()
-	raw, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatalf("read %s: %v", file, err)
-	}
-	lines := strings.Split(string(raw), "\n")
+	lines := strings.Split(readReadme(t, file), "\n")
 	start := -1
 	for i, line := range lines {
 		if line == from {
@@ -492,11 +501,7 @@ func TestReadmesStateTheRealSdkCount(t *testing.T) {
 		{"README.ZH_CN.md", "**\u652f\u6301 %s \u79cd SDK**", "SDK \u7edf\u4e00\u7ba1\u7406\uff08%s \u79cd\uff09", " \u79cd SDK**"},
 	}
 	for _, readme := range readmes {
-		raw, err := os.ReadFile(readme.file)
-		if err != nil {
-			t.Fatalf("read %s: %v", readme.file, err)
-		}
-		content := string(raw)
+		content := readReadme(t, readme.file)
 		bullet := fmt.Sprintf(readme.bullet, count)
 		if !strings.Contains(content, bullet) {
 			t.Errorf("%s: must state %q; sdk.AllSdkTypes has %d entries", readme.file, bullet, len(types))
