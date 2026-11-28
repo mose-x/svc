@@ -129,6 +129,22 @@ func TestSkillListsTheRealExitCodes(t *testing.T) {
 	}
 }
 
+// TestSkillWarnsAboutTheGatekeeperKill covers the one failure an agent cannot
+// diagnose from the output it gets: on macOS a quarantined unsigned binary is
+// SIGKILLed before it prints a byte, so `svc version` -- the very check the
+// skill tells an agent to run first -- exits 137 with both streams empty.
+// Unexplained, that reads as a broken build, and the natural response cannot
+// work: retrying changes nothing, the approval has to come from Finder.
+func TestSkillWarnsAboutTheGatekeeperKill(t *testing.T) {
+	body := readSkillFile(t, "skills/svc/SKILL.md")
+	for _, want := range []string{"Gatekeeper", "137", "Finder"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("skills/svc/SKILL.md must mention %q: a silent exit 137 on macOS "+
+				"is the one failure an agent cannot diagnose from what it printed", want)
+		}
+	}
+}
+
 // TestSkillFrontmatterIsLoadable pins the two fields a skill loader routes on.
 // A description that spans lines or a name that disagrees with the folder makes
 // the skill silently unselectable, which no runtime error would ever report.
