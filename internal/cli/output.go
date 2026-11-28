@@ -32,6 +32,10 @@ type Printer struct {
 	catalog *i18n.Catalog
 	stdout  io.Writer
 	stderr  io.Writer
+	// settle finishes the run's in-flight progress line, and is nil for a
+	// Printer built without renderers -- a unit test, or a command that has not
+	// bootstrapped yet. The writers treat nil as "there is nothing to settle".
+	settle func()
 }
 
 // NewPrinter builds a Printer for a resolved run. stdout is the result stream
@@ -54,6 +58,38 @@ func NewPrinter(opts Options, catalog *i18n.Catalog, stdout, stderr io.Writer) *
 		stdout:  stdout,
 		stderr:  stderr,
 	}
+}
+
+// SetProgressSettler registers the callback that finishes the run's progress
+// line before this Printer writes anything.
+//
+// bootstrap wires it to the two renderers' Close. A tty progress line is
+// redrawn in place with \r and deliberately carries no newline of its own, and
+// the only thing that used to settle it was Execute's deferred shutdown -- which
+// runs after the command has returned, and therefore after the result has
+// already been written. The consequence was a result glued to the last progress
+// frame behind that frame's padding, on one line, in every tty run that renders
+// progress. Settling here instead of at each call site is what makes it
+// impossible to forget: every result goes through this type.
+//
+// The callback is invoked before every write rather than latched after the
+// first one, because a command may interleave (progress, result, progress again
+// on a second SDK), and Close is idempotent -- a no-op once the line is clean,
+// and a no-op in the plain and JSON modes where every write already ended with
+// a newline.
+func (p *Printer) SetProgressSettler(settle func()) {
+	if p == nil {
+		return
+	}
+	p.settle = settle
+}
+
+// settleProgress runs that callback, if one was registered.
+func (p *Printer) settleProgress() {
+	if p == nil || p.settle == nil {
+		return
+	}
+	p.settle()
 }
 
 // Mode reports the output contract in force.
@@ -111,6 +147,7 @@ func (p *Printer) Paint(text string, tone Tone) string {
 // costs nothing downstream (jq does not care) and makes `--json` readable when
 // a human runs it by hand.
 func (p *Printer) JSON(value any) error {
+	p.settleProgress()
 	if p == nil || p.mode != ModeJSON {
 		return nil
 	}
@@ -125,6 +162,7 @@ func (p *Printer) JSON(value any) error {
 // Line writes one result line to stdout in the text modes. It is a no-op in
 // JSON mode, where the only thing on stdout is the document JSON wrote.
 func (p *Printer) Line(format string, args ...any) {
+	p.settleProgress()
 	if p == nil || p.mode == ModeJSON {
 		return
 	}
@@ -133,6 +171,7 @@ func (p *Printer) Line(format string, args ...any) {
 
 // Blank writes an empty line between two blocks of results, text modes only.
 func (p *Printer) Blank() {
+	p.settleProgress()
 	if p == nil || p.mode == ModeJSON {
 		return
 	}
@@ -148,6 +187,7 @@ func (p *Printer) Blank() {
 // note in a pipe is noise the consumer did not ask for, and a note on stderr
 // in JSON mode would land in the same stream as the JSON Lines progress.
 func (p *Printer) Note(format string, args ...any) {
+	p.settleProgress()
 	if p == nil || p.quiet || p.mode != ModeTTY {
 		return
 	}
@@ -167,6 +207,7 @@ type Pair struct {
 // measured in terminal cells, not bytes, because the keys are localized and
 // the default catalog is Chinese.
 func (p *Printer) KeyValue(pairs []Pair) {
+	p.settleProgress()
 	if p == nil || p.mode == ModeJSON || len(pairs) == 0 {
 		return
 	}
@@ -214,6 +255,7 @@ type Table struct {
 // the way of a field separator. Columns are separated by two spaces, which is
 // wide enough to read and narrow enough that `awk` on whitespace still works.
 func (p *Printer) Table(table Table) {
+	p.settleProgress()
 	if p == nil || p.mode == ModeJSON || len(table.Columns) == 0 {
 		return
 	}
