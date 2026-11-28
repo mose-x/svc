@@ -246,6 +246,16 @@ svc completion powershell  # 装进你的 PowerShell profile
 
 候选项来自命令树、已注册的 SDK 标识符和已安装的版本。补全参数时绝不联网，所以按 Tab 不会把 shell 卡住。
 
+### Agent 技能
+
+`skills/svc` 是一份 [Codex 技能](https://github.com/openai/skills)：AI agent 在调用这套 CLI 之前先读的说明。它写的是单看 `--help` 容易搞错的那几条——绝不裸跑 `svc`、任何写操作都带 `--yes`、解析用 `--json` 而不是表格、每个退出码的含义——完整的命令表在 `skills/svc/references/commands.md`。`skill_test.go` 会拿真实命令树去比对这两个文件，所以这份技能不会像手抄的清单那样悄悄过期。
+
+```bash
+cp -R skills/svc ~/.codex/skills/svc     # 或者让 Codex 的 skill-installer 去仓库里拉
+```
+
+它只是文档：没有任何二进制会读它，`svc <command> --help` 始终是权威。
+
 ## 与同类工具的对比优势
 
 | 对比项 | SVC（本项目） | nvm / sdkman / pyenv 等 | VS Code 插件 |
@@ -322,6 +332,8 @@ svc/
 │   │   ├── i18n/              # en / zh 翻译文件
 │   │   └── types/             # TypeScript 类型定义
 │   └── wailsjs/               # Wails 自动生成的绑定
+├── skills/
+│   └── svc/                   # Agent 技能：AI agent 该如何调用这套 CLI
 ├── winres/                    # Windows 资源（图标、清单）
 └── .github/workflows/
     ├── ci.yml                 # PR 上的 lint + test + commit-lint
