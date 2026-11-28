@@ -16,6 +16,12 @@
 # noisy diffs and can break checksums in content-addressed tooling. Force LF.
 *.json text eol=lf
 
+# Markdown: readme_test.go compares whole lines of the READMEs against the
+# command tree, and a trailing \r from a Windows autocrlf checkout breaks that
+# equality while leaving the heading visibly present. Force LF so the guards
+# read the same bytes on all three CI OSes.
+*.md text eol=lf
+
 # Frontend source files: TS/TSX/CSS/MJS. CRLF breaks some tooling (esbuild
 # source maps, eslint parsers) and creates noisy cross-platform diffs. Force LF
 # so CI (Linux) and local (Windows autocrlf) stay byte-identical.
