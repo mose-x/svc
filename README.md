@@ -403,9 +403,9 @@ brew tap mose-x/tap
 brew install --cask mose-x/tap/svc
 ```
 
-Installs the `.dmg` of the latest release into `/Applications`. The cask lives in [mose-x/homebrew-tap](https://github.com/mose-x/homebrew-tap), where a daily workflow rewrites the version and recomputes every `sha256` from the published release assets. Homebrew is optional: the direct download in [Installation](#installation) needs none of this.
+Installs the `.dmg` of the latest release into `/Applications`, and links the command line onto your PATH: `/usr/local/bin/svc` points at `/Applications/svc.app/Contents/MacOS/svc`, the very binary the window runs. [Command Line](#command-line) therefore needs no setup of its own on macOS, and `brew uninstall` takes the link back off. The cask lives in [mose-x/homebrew-tap](https://github.com/mose-x/homebrew-tap), where a daily workflow rewrites the version and recomputes every `sha256` from the published release assets. Homebrew is optional: the direct download in [Installation](#installation) needs none of this.
 
-`brew info --cask mose-x/tap/svc` prints the caveats: the app is not code signed (right-click → Open on first launch), and uninstalling keeps `~/.svc` plus the `source ~/.svc.rc` line in your shell rc.
+The app is not code signed and the download arrives quarantined, so Gatekeeper kills that same binary before it prints anything: `svc list` exits `137` with no output at all. Approve it once from Finder — right-click `svc` in `/Applications`, choose Open, then Open again in the dialog — and the window and the terminal command both work from then on. `brew info --cask mose-x/tap/svc` prints this ordering as a caveat, plus the rest: uninstalling keeps `~/.svc` and the `source ~/.svc.rc` line in your shell rc.
 
 Homebrew 7 refuses to load *any* entry of an untrusted third-party tap, the fully qualified name above included, which is why `brew trust mose-x/tap` comes first. It is idempotent and does not need the tap to exist yet, so that order is also correct on a machine that has never seen it. Homebrew 6 only required trust for the short form (`brew install --cask svc`); `brew untrust mose-x/tap` undoes it on either.
 
