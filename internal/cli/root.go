@@ -301,6 +301,11 @@ func (r *runner) bootstrap(level appcore.Level) (*appcore.Core, error) {
 	// first event a service emits already has somewhere to go.
 	r.progress = NewProgressRenderer(r.opts, r.catalog, r.in.Stderr)
 	r.scan = NewScanRenderer(r.opts, r.catalog, r.in.Stderr)
+	// The Printer settles the line the renderers leave open before it writes a
+	// result. Both Close methods are idempotent and nil-safe, and settleProgress
+	// reads the fields at call time, so the wiring does not depend on the order
+	// of the assignments above it.
+	r.printer.SetProgressSettler(r.settleProgress)
 	r.runtime = clirt.New(ctx, r.eventSink())
 
 	core, err := r.home.Bootstrap(ctx, r.runtime, level)
@@ -344,6 +349,20 @@ func (r *runner) eventSink() clirt.EventSink {
 	}
 }
 
+// settleProgress gives the tty progress line its newline, if it still needs
+// one. It is the single place the two renderers are closed early: the Printer
+// calls it before every result write, and finish calls it before an error is
+// reported, because the error text goes to the same stream and would otherwise
+// land on the same line as the last frame.
+//
+// Both Close methods are no-ops once the line is clean and no-ops at all outside
+// tty mode, so calling this more than once -- and calling it again from
+// shutdown -- is harmless.
+func (r *runner) settleProgress() {
+	r.scan.Close()
+	r.progress.Close()
+}
+
 // shutdown releases what the run opened, in the order that matters: the
 // progress line gets its newline before the signal handlers are released, so a
 // Ctrl-C arriving during teardown cannot leave the terminal mid-line.
@@ -364,6 +383,7 @@ func (r *runner) shutdown() {
 // first so the code and the message can never disagree.
 func (r *runner) finish(err error) int {
 	if err != nil {
+		r.settleProgress()
 		r.reportError(err)
 	}
 	if r.runtime != nil && r.runtime.QuitRequested() {

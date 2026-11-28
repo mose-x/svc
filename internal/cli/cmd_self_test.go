@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -587,6 +588,58 @@ func TestSelfUpdateDownloadsAndHandsOverTheSwap(t *testing.T) {
 			t.Error("stderr is empty: the download emitted no progress at all")
 		}
 	})
+}
+
+// TestSelfUpdateSettlesTheProgressLineBeforeTheResult drives the whole run
+// through one buffer, because the property is ordering rather than content: the
+// download renders a tty progress line that carries no newline of its own, so
+// the hand-over sentence has to finish it first or it lands on the same line,
+// behind the last frame's padding. stdout and stderr point at the same buffer to
+// preserve the order a terminal would have shown.
+func TestSelfUpdateSettlesTheProgressLineBeforeTheResult(t *testing.T) {
+	const (
+		current = "2.0.0"
+		latest  = "2.1.0"
+	)
+	feed := newReleaseFeed(t, []release{released(t, latest, "- a fix")})
+	home := t.TempDir()
+	about := aboutJSON(t, testAppInfo(current, feed))
+	redirectTempDir(t)
+	rec := &swapRecorder{}
+
+	var terminal bytes.Buffer
+	code := Execute(ExecuteInput{
+		Args:      []string{"--lang", "en", "self", "update", "--yes"},
+		Catalogs:  shippedCatalogs(t),
+		AboutJSON: about,
+		Stdin:     strings.NewReader(""),
+		Stdout:    &terminal,
+		Stderr:    &terminal,
+		OpenHome:  homeAt(t, home),
+		Env:       terminalEnv,
+		Swap:      rec.fn(),
+	})
+	written := terminal.String()
+	if code != ExitOK {
+		t.Fatalf("svc self update at a terminal = exit %d, want %d:\n%s", code, ExitOK, written)
+	}
+	if !strings.Contains(written, "\r") {
+		t.Fatalf("the run rendered no progress line, so it settles nothing:\n%q", written)
+	}
+
+	result := catalogWord(t, "en", "cli.selfUpdateApplied", nil)
+	at := strings.Index(written, result)
+	if at <= 0 {
+		t.Fatalf("the hand-over sentence is missing or starts the output:\n%q", written)
+	}
+	if written[at-1] != '\n' {
+		t.Errorf("the result follows %q instead of starting a fresh line:\n%q", written[max(0, at-24):at], written)
+	}
+	// One newline settles the frame and one terminates the sentence. Anything
+	// after that is the blank line the deferred Close used to add on top.
+	if !strings.HasSuffix(written, "\n"+result+"\n") {
+		t.Errorf("the run does not end with the settled result:\n%q", written)
+	}
 }
 
 // TestSelfUpdateAsksTheWindowsOwnQuestion pins the confirmation to the modal's

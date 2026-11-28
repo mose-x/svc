@@ -405,6 +405,36 @@ func TestFinishReturnsOKAfterARequestedQuit(t *testing.T) {
 	}
 }
 
+// TestFinishSettlesTheProgressLineBeforeAnError is the error half of the same
+// rule the Printer keeps on the success path: reportError writes to the stream
+// the tty progress line is being redrawn on, so a failure raised mid-download
+// would otherwise land on the last frame's own line, behind its padding.
+func TestFinishSettlesTheProgressLineBeforeAnError(t *testing.T) {
+	s := newStreams()
+	r := newRunner(t, s, globalFlags{}, tempHome(t, nil))
+	r.progress = NewProgressRenderer(Options{Mode: ModeTTY}, progressCatalog(t, "zh"), s.stderr)
+	r.progress.Render(event(StageDownloading, 42, 100))
+
+	if got := r.finish(errors.New("the download stalled")); got != ExitError {
+		t.Errorf("finish(err) = %d, want %d", got, ExitError)
+	}
+
+	written := s.stderr.String()
+	if !strings.Contains(written, "\nsvc: the download stalled\n") {
+		t.Errorf("the error did not start a fresh line:\n%q", written)
+	}
+	if got := strings.Count(written, "\n"); got != 2 {
+		t.Errorf("stderr holds %d newlines, want the settled frame's and the error's:\n%q", got, written)
+	}
+
+	// Execute's deferred shutdown closes the same line again and must add
+	// nothing: settling early may not cost a blank line at the end.
+	r.shutdown()
+	if got := s.stderr.String(); got != written {
+		t.Errorf("shutdown wrote %d more bytes after finish had settled the line:\n%q", len(got)-len(written), got)
+	}
+}
+
 // TestReportErrorTranslatesAndSeparatesUsage covers the two shapes of failure
 // text: a service failure is rendered through the catalog with no marker left
 // in it and no usage dumped, while a usage failure keeps its message and adds

@@ -154,6 +154,9 @@ func TestPrinterIsSafeBeforeOptionResolution(t *testing.T) {
 	if err := p.JSON(map[string]string{"sdk": "go"}); err != nil {
 		t.Errorf("JSON() = %v, want nil", err)
 	}
+	// A nil Printer has no renderers to settle and must not panic on the way to
+	// finding that out.
+	p.SetProgressSettler(func() { t.Error("a nil Printer ran a settler") })
 	// None of these may panic; there is nothing to assert but that they return.
 	p.Line("%s", "ignored")
 	p.Blank()
@@ -538,4 +541,97 @@ func TestPrinterBlankSeparatesBlocks(t *testing.T) {
 	if jsonOut.Len() != 0 {
 		t.Errorf("stdout = %q, want nothing in JSON mode", jsonOut)
 	}
+}
+
+// TestPrinterSettlesTheProgressLineBeforeItWrites is the tty half of the output
+// contract. A progress line is redrawn in place with \r and deliberately
+// carries no newline of its own, so whatever speaks next has to finish it first
+// -- and every writer does, through the settler bootstrap registers. The defect
+// this pins was invisible to every other test in the file: the result sentence
+// of `svc install` and `svc self update` landed on the last frame's own line,
+// behind that frame's padding, in every tty run that rendered progress.
+func TestPrinterSettlesTheProgressLineBeforeItWrites(t *testing.T) {
+	cases := []struct {
+		name  string
+		write func(p *Printer)
+		// want is what the writer must leave behind, newline included.
+		want string
+	}{
+		{"Line", func(p *Printer) { p.Line("result") }, "result\n"},
+		{"Blank", func(p *Printer) { p.Blank() }, "\n"},
+		{"Note", func(p *Printer) { p.Note("a note") }, "a note\n"},
+		{"KeyValue", func(p *Printer) { p.KeyValue([]Pair{{Key: "k", Value: "v"}}) }, "k  v\n"},
+		{"Table", func(p *Printer) {
+			p.Table(Table{Columns: []Column{{Header: "h"}}, Rows: [][]string{{"r"}}})
+		}, "h\nr\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// One buffer for both streams: a tty shows them interleaved, and the
+			// ordering is exactly what is under test.
+			var out bytes.Buffer
+			renderer := NewProgressRenderer(Options{Mode: ModeTTY}, progressCatalog(t, "zh"), &out)
+			p := NewPrinter(Options{Mode: ModeTTY}, nil, &out, &out)
+			p.SetProgressSettler(renderer.Close)
+
+			renderer.Render(event(StageDownloading, 42, 100))
+			c.write(p)
+
+			written := out.String()
+			if !strings.HasSuffix(written, "\n"+c.want) {
+				t.Errorf("%s did not start a fresh line:\n%q", c.name, written)
+			}
+			// One newline settles the frame, the rest are the writer's own. A
+			// surplus would be a blank line nobody asked for.
+			if got, want := strings.Count(written, "\n"), strings.Count(c.want, "\n")+1; got != want {
+				t.Errorf("output holds %d newlines, want %d:\n%q", got, want, written)
+			}
+		})
+	}
+
+	t.Run("an interleaved run settles again", func(t *testing.T) {
+		var out bytes.Buffer
+		renderer := NewProgressRenderer(Options{Mode: ModeTTY}, progressCatalog(t, "zh"), &out)
+		p := NewPrinter(Options{Mode: ModeTTY}, nil, &out, &out)
+		p.SetProgressSettler(renderer.Close)
+
+		// Two SDKs in one command: progress, a result, progress again, a result.
+		// Latching the settle after the first write is the plausible mistake,
+		// and it would leave the second sentence on the second frame's line.
+		renderer.Render(event(StageDownloading, 42, 100))
+		p.Line("first")
+		renderer.Render(event(StageExtracting, 0, 0))
+		p.Line("second")
+
+		written := out.String()
+		for _, want := range []string{"\nfirst\n", "\nsecond\n"} {
+			if !strings.Contains(written, want) {
+				t.Errorf("output does not carry %q:\n%q", want, written)
+			}
+		}
+		if got := strings.Count(written, "\n"); got != 4 {
+			t.Errorf("output holds %d newlines, want two frames and two results:\n%q", got, written)
+		}
+	})
+
+	t.Run("the other two modes are untouched", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		renderer := NewProgressRenderer(Options{Mode: ModeJSON}, progressCatalog(t, "zh"), &stderr)
+		p := NewPrinter(Options{Mode: ModeJSON}, nil, &stdout, &stderr)
+		p.SetProgressSettler(renderer.Close)
+
+		renderer.RenderUpdate(updateEvent(StageDownloading, 42))
+		if err := p.JSON(map[string]string{"sdk": "go"}); err != nil {
+			t.Fatalf("JSON: %v", err)
+		}
+		// Outside tty mode every progress write already ended with a newline, so
+		// Close has nothing to add and the document is still the whole of stdout.
+		if got, want := strings.Count(stderr.String(), "\n"), 1; got != want {
+			t.Errorf("stderr holds %d newlines, want the one JSON Lines progress event:\n%q", got, stderr.String())
+		}
+		var document map[string]string
+		if err := json.Unmarshal(stdout.Bytes(), &document); err != nil {
+			t.Errorf("stdout is not one JSON document: %v\n%q", err, stdout)
+		}
+	})
 }
