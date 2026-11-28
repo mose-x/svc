@@ -403,9 +403,9 @@ brew tap mose-x/tap
 brew install --cask mose-x/tap/svc
 ```
 
-安装的是最新 release 的 `.dmg`，会放进 `/Applications`。cask 位于 [mose-x/homebrew-tap](https://github.com/mose-x/homebrew-tap)，那边的定时任务每天按已发布的 release 资源重写版本号并重算全部 `sha256`。Homebrew 只是可选路径：直接用[安装](#安装)一节的下载链接即可，不需要下面这些。
+安装的是最新 release 的 `.dmg`，会放进 `/Applications`，同时把命令行挂到 PATH 上：`/usr/local/bin/svc` 指向 `/Applications/svc.app/Contents/MacOS/svc`，和窗口启动的是同一个二进制。因此在 macOS 上[命令行](#命令行)一节不需要任何额外配置，`brew uninstall` 也会把这个链接一并撤掉。cask 位于 [mose-x/homebrew-tap](https://github.com/mose-x/homebrew-tap)，那边的定时任务每天按已发布的 release 资源重写版本号并重算全部 `sha256`。Homebrew 只是可选路径：直接用[安装](#安装)一节的下载链接即可，不需要下面这些。
 
-注意事项见 `brew info --cask mose-x/tap/svc`：应用未签名（首次启动需右键 → 打开），卸载后会保留 `~/.svc` 以及 shell 配置里的 `source ~/.svc.rc` 这一行。
+应用没有签名，下载来的文件还带着隔离属性，所以 Gatekeeper 会在它输出任何内容之前就把这个二进制杀掉：`svc list` 以 `137` 退出且毫无提示。在访达里放行一次（`/Applications` 中右键 `svc` → 打开 → 在弹窗里再点打开），此后窗口和终端命令都能正常用。这个先后顺序写在 `brew info --cask mose-x/tap/svc` 的注意事项里，其余几条也一样：卸载后会保留 `~/.svc` 以及 shell 配置里的 `source ~/.svc.rc` 这一行。
 
 Homebrew 7 会拒绝加载未信任第三方 tap 的**任何**条目，上面的全限定名也不例外，所以 `brew trust mose-x/tap` 要放在最前面。它是幂等的，而且不要求 tap 已经存在，因此这个顺序在从没见过该 tap 的机器上同样成立。Homebrew 6 只对短名（`brew install --cask svc`）要求信任；两者都可以用 `brew untrust mose-x/tap` 撤销。
 

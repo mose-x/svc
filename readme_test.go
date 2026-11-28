@@ -162,6 +162,27 @@ func TestReadmesTrustTheTapBeforeInstalling(t *testing.T) {
 	}
 }
 
+// TestReadmesSayTheCaskAlsoInstallsTheCommandLine pins the two facts a reader
+// needs now that the cask links a binary: where the command comes from, and
+// that Gatekeeper kills it until the app has been approved once from Finder.
+// Without the second one the documented install looks broken rather than
+// unfinished -- `svc list` exits 137 printing nothing at all, which reads as a
+// bad build instead of a missing approval.
+func TestReadmesSayTheCaskAlsoInstallsTheCommandLine(t *testing.T) {
+	for _, readme := range homebrewReadmes {
+		section := homebrewSection(t, readme.file, readme.sectionEnd)
+		for _, want := range []string{
+			"/usr/local/bin/svc",
+			"Contents/MacOS/svc",
+			"137",
+		} {
+			if !strings.Contains(section, want) {
+				t.Errorf("%s: the Homebrew section must mention %q", readme.file, want)
+			}
+		}
+	}
+}
+
 // The CLI chapter documents a command tree that lives in internal/cli, so
 // every guard below reads the tree by running it rather than from a list kept
 // here. A list would be the third copy of the same names after cobra's and the
