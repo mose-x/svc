@@ -1,0 +1,7 @@
+interface:
+  display_name: "svc SDK Manager"
+  short_description: "Install, switch and inspect SDK versions from a terminal"
+  default_prompt: "Use $svc to install or switch an SDK version with the svc command line."
+
+policy:
+  allow_implicit_invocation: true
