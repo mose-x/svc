@@ -45,7 +45,7 @@ A cross-platform desktop application for unified management of multiple SDK vers
 - **Cross-Platform Replace**: Unix uses a shell script (`pgrep` wait → backup → replace → relaunch); Windows uses a batch script (`tasklist` wait → backup → replace → relaunch) to handle running-binary locks
 - **Asset Naming**: `svc-{version}-{os}-{arch}.{ext}` (amd64 → x64), with a standalone `sha256sums.txt` shipped per release
 
-### Command-Line Interface
+### Command-Line Interface (since v3.0.0)
 - **One Binary, Two Shells**: `svc` with no arguments opens the window, `svc <command>` runs a command — both call the same services over the same files
 - **Full Coverage**: every operation the window offers has a command, from `svc install` to `svc self update`
 - **Scriptable**: `--json` puts one machine-readable document on stdout and moves progress to stderr, so `| jq` and `$( )` both work
@@ -76,7 +76,7 @@ See [Command Line](#command-line) for the full reference.
 
 ## Command Line
 
-`svc` is one binary with two shells. Run it with no arguments and it launches the graphical application; run it with a command and it behaves like a CLI and exits. Both shells call the same services over the same files, so a version installed from a terminal shows up in the window, and the version the window activated is what `svc current` reports.
+`svc` is one binary with two shells. Run it with no arguments and it launches the graphical application; run it with a command and it behaves like a CLI and exits. Both shells call the same services over the same files, so a version installed from a terminal shows up in the window, and the version the window activated is what `svc current` reports. The command tree arrived in v3.0.0: an older build knows only `init`, `setup`, `version` and `help`, and opens the window for anything else.
 
 ```bash
 svc list                          # every SDK and its local state
