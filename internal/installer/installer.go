@@ -42,6 +42,13 @@ type Service struct {
 	rt       wailsrt.Runtime
 	cancels  *cancelTracker
 	locks    *fetcherLocks
+	// NodeManagerProbe reports the external Node version manager on this machine,
+	// or "" when there is none. New wires it to sdk.NodeManagerOnMachine; it is a
+	// field so a test does not inherit the nvm installation of whichever host runs
+	// it. Injecting is the only way to get a deterministic answer: the probe
+	// resolves `node` through the login-shell PATH, which the sdk package caches
+	// process-wide behind a sync.Once, so setting PATH in a test changes nothing.
+	NodeManagerProbe func() string
 }
 
 // New wires an install Service. registry/rt must be non-nil in production
@@ -58,6 +65,8 @@ func New(cfg *config.Config, registry *sdk.Registry, dl *downloader.Downloader, 
 		rt:       rt,
 		cancels:  newCancelTracker(),
 		locks:    &fetcherLocks{},
+
+		NodeManagerProbe: sdk.NodeManagerOnMachine,
 	}
 }
 
@@ -328,6 +337,41 @@ func (s *Service) refreshVersionsInBackground(t sdk.SdkType, f sdk.VersionFetche
 	}()
 }
 
+// ExternalManagerRefusal returns the error svc raises when it is asked to manage
+// an SDK an external version manager already owns, and nil when the operation may
+// proceed. Node.js is the only SDK with such a manager today (nvm-rust / nvm), so
+// every other SDK returns nil without probing anything.
+//
+// It is exported because both shells call it before they ask a question whose
+// answer is already "no" -- the CLI before its confirmation prompt, the GUI
+// before its install modal -- while InstallSdk and SwitchVersion call it again
+// themselves: a shell that forgot, or a Wails binding invoked directly, must not
+// be able to reach the download.
+func (s *Service) ExternalManagerRefusal(sdkTypeStr string) error {
+	if sdkTypeStr != string(sdk.NodeJS) {
+		return nil
+	}
+	probe := s.NodeManagerProbe
+	if probe == nil {
+		// A Service built as a literal rather than through New still has to
+		// enforce the rule; falling back is cheaper than panicking.
+		probe = sdk.NodeManagerOnMachine
+	}
+	manager := probe()
+	if manager == "" {
+		return nil
+	}
+	logger.Info("Refusing to manage %s: owned by %s", sdkTypeStr, manager)
+	// The params are interpolated straight into a translated sentence, so they
+	// carry the words a user reads rather than the identifiers a service uses:
+	// "Node.js" and "nvm(nvm-rust)", which is exactly what the GUI's own
+	// short-circuit renders from the same errors.managed-sdk key.
+	return apperr.New(apperr.ManagedSdk, map[string]string{
+		"sdk":     sdk.SdkDisplayName(sdk.SdkType(sdkTypeStr)),
+		"manager": sdk.ExternalManagerLabel(manager),
+	})
+}
+
 func (s *Service) InstallSdk(sdkTypeStr string, version string) error {
 	if s.registry == nil {
 		return apperr.New(apperr.AppNotInitialized, nil)
@@ -342,6 +386,9 @@ func (s *Service) InstallSdk(sdkTypeStr string, version string) error {
 	f := s.registry.Get(sdkType)
 	if f == nil {
 		return apperr.New(apperr.UnknownSdkType, map[string]string{"sdk": sdkTypeStr})
+	}
+	if err := s.ExternalManagerRefusal(sdkTypeStr); err != nil {
+		return err
 	}
 
 	logger.Info("Starting installation: %s %s", sdkTypeStr, version)
@@ -575,6 +622,13 @@ func (s *Service) SwitchVersion(sdkTypeStr string, version string) error {
 	f := s.registry.Get(sdkType)
 	if f == nil {
 		return apperr.New(apperr.UnknownSdkType, map[string]string{"sdk": sdkTypeStr})
+	}
+	// Switching is refused for the same reason installing is: it re-points the
+	// `node` shim at svc's copy, which is exactly the fight the refusal exists
+	// to prevent. Uninstalling is NOT refused -- removing svc's own copy is how
+	// a user gets out of the situation, and locking that too would trap them.
+	if err := s.ExternalManagerRefusal(sdkTypeStr); err != nil {
+		return err
 	}
 
 	logger.Info("Switching %s version to: %s", sdkTypeStr, version)

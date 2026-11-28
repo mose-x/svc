@@ -208,7 +208,6 @@ func TestCliWordingIsSharedWithTheGUI(t *testing.T) {
 		"detail.systemConflictMsg",
 		"detail.confirmInstallSdk",
 		"detail.confirmInstallDesc",
-		"detail.installExternalManagerWarn",
 		"detail.installSuccess",
 		"detail.reinstallConfirm",
 		"detail.reinstallConfirmDesc",

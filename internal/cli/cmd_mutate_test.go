@@ -210,9 +210,10 @@ func TestExternalManagerLabelMatchesTheFrontend(t *testing.T) {
 	if len(frontend) == 0 {
 		t.Fatal("the regexp matched no entries; the source shape changed")
 	}
-	if len(frontend) != len(externalManagerLabels) {
-		t.Errorf("the frontend lists %d managers %v, the CLI lists %d %v",
-			len(frontend), sortedKeys(frontend), len(externalManagerLabels), sortedKeys(externalManagerLabels))
+	backend := sdk.ExternalManagerLabels()
+	if len(frontend) != len(backend) {
+		t.Errorf("the frontend lists %d managers %v, the backend lists %d %v",
+			len(frontend), sortedKeys(frontend), len(backend), sortedKeys(backend))
 	}
 	for manager, label := range frontend {
 		if got := ExternalManagerLabel(manager); got != label {
@@ -1386,5 +1387,161 @@ func TestSwitchProducesTheSameStateAsTheGui(t *testing.T) {
 		if got[rel] != want[rel] {
 			t.Errorf("%s differs between the two shells\n--- GUI ---\n%s\n--- CLI ---\n%s", rel, want[rel], got[rel])
 		}
+	}
+}
+
+// --- the external-manager refusal -------------------------------------------
+
+// seedNodeManagerHome lays down the directory whose presence means "this machine
+// belongs to nvm". Only the directory matters: DetectNodeManager asks whether a
+// manager home exists, not whether it holds a working node, because a half-built
+// ~/.nvm.rust is still a manager the user is going to run.
+func seedNodeManagerHome(t *testing.T, home string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(home, ".nvm.rust"), 0755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// managedSdkSentence is the refusal as the shipped catalog renders it. The
+// manager is asked of the machine rather than written out, because which one the
+// host resolves to (nvm-rust from a seeded home, or nvm from a node already on
+// the runner's PATH) is not this test's subject -- that the sentence reaches the
+// user with the same labels the GUI uses is.
+func managedSdkSentence(t *testing.T) string {
+	t.Helper()
+	manager := sdk.NodeManagerOnMachine()
+	if manager == "" {
+		t.Fatal("no external manager was detected, so the run cannot have been refused for one")
+	}
+	return catalogWord(t, "zh", "errors.managed-sdk", map[string]string{
+		"sdk":     sdk.SdkDisplayName(sdk.NodeJS),
+		"manager": sdk.ExternalManagerLabel(manager),
+	})
+}
+
+// TestInstallRefusesAnSdkAnExternalManagerOwns pins the CLI's half of the rule
+// and, more specifically, where it fires. The probe is injected rather than
+// seeded: getPlatformPath caches the login shell's PATH behind a sync.Once, so
+// no amount of t.Setenv can say what `node` resolves to here, and the host
+// running the test may well have nvm of its own.
+//
+// The stdin assertion is the one that carries the weight. "y\n" is a user who
+// said yes; finding it untouched proves the refusal happened before the question
+// was asked, which is the difference between declining an operation and asking
+// permission to decline it.
+func TestInstallRefusesAnSdkAnExternalManagerOwns(t *testing.T) {
+	skipOnWindowsRegistryWrites(t)
+	s := newStreams()
+	s.stdin.WriteString("y\n")
+	r := newRunner(t, s, globalFlags{}, tempHome(t, nil))
+	r.in.Env.StdinTTY = true
+	r.in.Env.StdoutTTY = true
+	core, err := r.bootstrap(appcore.LevelWrite)
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	t.Cleanup(r.shutdown)
+	core.Installer.NodeManagerProbe = func() string { return "nvm-rust" }
+
+	err = r.runInstall(actionInstall, "nodejs", "22.11.0")
+	if err == nil {
+		t.Fatal("runInstall = nil on a machine nvm owns, want a refusal")
+	}
+	if got := ExitCodeForError(err); got != ExitUsage {
+		t.Errorf("ExitCodeForError = %d, want %d: a refusal is a usage failure, not a crash (%v)", got, ExitUsage, err)
+	}
+	// stdout is the result stream. A refused install produced no result, so it
+	// must stay empty or a script would read a sentence as an outcome.
+	if s.stdout.Len() != 0 {
+		t.Errorf("a refused install wrote %q to stdout", s.stdout)
+	}
+	if got := s.stdin.Len(); got != len("y\n") {
+		t.Errorf("stdin has %d byte(s) left, want %d: the confirmation prompt was reached before the refusal", got, len("y\n"))
+	}
+}
+
+// TestSwitchCommandRefusesAMachineAnExternalManagerOwns drives the whole command
+// end to end, probe included, so the wiring is covered too: a refusal that only
+// existed in runInstall would leave `svc switch` re-pointing the node shim at
+// svc's copy, which is the exact fight the rule is there to prevent.
+func TestSwitchCommandRefusesAMachineAnExternalManagerOwns(t *testing.T) {
+	skipOnWindowsRegistryWrites(t)
+	code, s := pipedRun(t, func(home string) {
+		seedNodeManagerHome(t, home)
+		seedNodeVersion(t, home)
+	}, "switch", string(sdk.NodeJS), nodeVersion, "--yes")
+
+	if code != ExitUsage {
+		t.Fatalf("svc switch nodejs = exit %d, want %d; stderr:\n%s", code, ExitUsage, s.stderr)
+	}
+	if s.stdout.Len() != 0 {
+		t.Errorf("a refused switch wrote %q to stdout", s.stdout)
+	}
+	if got := errLines(s); !slices.Equal(got, []string{"svc: " + managedSdkSentence(t)}) {
+		t.Errorf("stderr = %q, want only the refusal", got)
+	}
+}
+
+// TestInstallCommandRefusesAMachineAnExternalManagerOwns is the same rule from
+// the other entry point, and deliberately runs without --yes: the refusal has to
+// be a usage failure (exit 2) rather than the "a pipe cannot answer a prompt"
+// failure a missing --yes would otherwise produce.
+func TestInstallCommandRefusesAMachineAnExternalManagerOwns(t *testing.T) {
+	skipOnWindowsRegistryWrites(t)
+	code, s := pipedRun(t, func(home string) {
+		seedNodeManagerHome(t, home)
+	}, "install", string(sdk.NodeJS), nodeVersion)
+
+	if code != ExitUsage {
+		t.Fatalf("svc install nodejs = exit %d, want %d; stderr:\n%s", code, ExitUsage, s.stderr)
+	}
+	if !strings.Contains(s.stderr.String(), managedSdkSentence(t)) {
+		t.Errorf("stderr = %q, want it to carry the refusal", s.stderr)
+	}
+}
+
+// TestUninstallStaysAllowedOnAMachineAnExternalManagerOwns pins the escape
+// route. Refusing to install and refusing to remove would leave a user who once
+// installed Node.js through svc with a copy they cannot delete, and "keep using
+// nvm" is not advice they can follow until that copy is gone.
+func TestUninstallStaysAllowedOnAMachineAnExternalManagerOwns(t *testing.T) {
+	skipOnWindowsRegistryWrites(t)
+	var home string
+	code, s := pipedRun(t, func(h string) {
+		home = h
+		seedNodeManagerHome(t, h)
+		seedNodeVersion(t, h)
+	}, "uninstall", string(sdk.NodeJS), nodeVersion, "--yes")
+
+	if code != ExitOK {
+		t.Fatalf("svc uninstall nodejs = exit %d, want %d; stderr:\n%s", code, ExitOK, s.stderr)
+	}
+	if strings.Contains(s.stderr.String(), "errors.managed-sdk") || strings.Contains(s.stdout.String(), "managed-sdk") {
+		t.Errorf("an uninstall was refused for the external manager; stderr:\n%s", s.stderr)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".svc", string(sdk.NodeJS), nodeVersion)); !os.IsNotExist(err) {
+		t.Errorf("the version directory survived the uninstall (stat err = %v)", err)
+	}
+}
+
+// TestOtherSdksAreUnaffectedByTheNodeManager pins the scope of the rule from the
+// command level: a machine drowning in nvm still installs Go.
+func TestOtherSdksAreUnaffectedByTheNodeManager(t *testing.T) {
+	skipOnWindowsRegistryWrites(t)
+	s := newStreams()
+	s.stdin.WriteString("y\n")
+	r := newRunner(t, s, globalFlags{}, tempHome(t, nil))
+	r.in.Env.StdinTTY = true
+	r.in.Env.StdoutTTY = true
+	core, err := r.bootstrap(appcore.LevelWrite)
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	t.Cleanup(r.shutdown)
+	core.Installer.NodeManagerProbe = func() string { return "nvm-rust" }
+
+	if err := core.Installer.ExternalManagerRefusal(goSdk); err != nil {
+		t.Errorf("ExternalManagerRefusal(go) = %v on a machine nvm owns, want nil", err)
 	}
 }
