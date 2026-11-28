@@ -15,6 +15,8 @@ svc version
 
 The command tree only exists from **v3.0.0**. An older build knows just `init`, `setup`, `version` and `help`; for anything else it **opens a window and blocks forever**. If `svc version` prints below 3.0.0, stop and tell the user to update rather than running a command that will hang the session.
 
+On macOS the check itself can come back empty. A quarantined unsigned binary — what a cask install leaves behind unless `--no-quarantine` was passed, and what a browser download always leaves behind — is SIGKILLed by Gatekeeper before it prints a byte, so `svc version` exits **137** with nothing on either stream. Nothing an agent can run fixes that: the user has to approve the app once from Finder (right-click `svc` in `/Applications`, choose Open, then Open again). Report it and stop — do not retry, and do not read the silence as a broken build.
+
 ## Hard rules
 
 - **Never run bare `svc`.** It launches the GUI and does not return.
